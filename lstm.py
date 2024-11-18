@@ -4,6 +4,46 @@
 import torch
 import torch.nn as nn
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
+from dataset import SpectrogramDataset, torch_train_val_split, CLASS_MAPPING
+import copy
+import matplotlib.pyplot as plt
+import numpy as np
+import random
+
+seed = 42
+random.seed(seed)
+np.random.seed(seed)
+torch.manual_seed(seed)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    # Ensure deterministic behavior
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    
+
+class EarlyStopping:
+    def __init__(self, patience, mode="min", base=None):
+        self.best = base
+        self.patience = patience
+        self.patience_left = patience
+        self.mode = mode
+        
+    def stop(self, value: float) -> bool:
+        if self.has_improved(value):
+            self.patience_left = self.patience
+            self.best = value
+        else:
+            self.patience_left -= 1
+        return self.patience_left <= 0
+    
+    def is_best(self, value: float) -> bool:
+        return self.has_improved(value)
+    
+    def has_improved(self, value: float) -> bool:
+        return (self.best is None) or (
+            value < self.best if self.mode == "min" else value > self.best
+        )
 
 
 class PadPackedSequence(nn.Module):
@@ -164,3 +204,309 @@ class LSTMBackbone(nn.Module):
         last_out = out.gather(gather_dim, gather_idx).squeeze(gather_dim)
 
         return last_out
+
+
+class GenreClassifier(nn.Module):
+    def __init__(self, input_dim, num_classes, rnn_size=128, num_layers=2, dropout=0.2):
+        super(GenreClassifier, self).__init__()
+        
+        self.lstm = LSTMBackbone(input_dim, rnn_size=rnn_size, num_layers=num_layers, dropout=dropout)
+        
+        self.classifier = nn.Sequential(
+            nn.Linear(self.lstm.feature_size, rnn_size),     
+            nn.ReLU(),
+            nn.Linear(rnn_size, num_classes)
+        )
+        
+    
+    def forward(self, x, lengths):
+        # Get lstm output
+        x = self.lstm(x, lengths)
+        # Pass lstm output to classifier
+        x = self.classifier(x)
+        return x
+    
+
+def train_epoch(model, train_loader, criterion, optimizer, device, overfit_batch=False):
+    model.train()
+    total_loss = 0
+    total_correct = 0
+    total_samples = 0
+    
+    # If overfitting a batch, we'll only use the first few batches
+    batch_limit = 3 if overfit_batch else float('inf')
+    
+    for batch_idx, (specs, labels, lengths) in enumerate(train_loader):
+        if batch_idx >= batch_limit and overfit_batch:
+            break
+            
+        specs = specs.to(device)
+        labels = labels.to(device)
+        lengths = lengths.to(device)
+        
+        # Forward pass
+        optimizer.zero_grad()
+        outputs = model(specs, lengths)
+        loss = criterion(outputs, labels)
+        
+        # Backward pass
+        loss.backward()
+        optimizer.step()
+        
+        # Calculate accuracy
+        _, predicted = torch.max(outputs.data, 1)
+        total_correct += (predicted == labels).sum().item()
+        total_samples += labels.size(0)
+        total_loss += loss.item()
+        
+    avg_loss = total_loss / (batch_idx + 1)
+    accuracy = total_correct / total_samples
+    return avg_loss, accuracy
+
+def evaluate(model, val_loader, criterion, device):
+    model.eval()
+    total_loss = 0
+    total_correct = 0
+    total_samples = 0
+    
+    with torch.no_grad():
+        for specs, labels, lengths in val_loader:
+            specs = specs.to(device)
+            labels = labels.to(device)
+            lengths = lengths.to(device)
+            
+            outputs = model(specs, lengths)
+            loss = criterion(outputs, labels)
+            
+            _, predicted = torch.max(outputs.data, 1)
+            total_correct += (predicted == labels).sum().item()
+            total_samples += labels.size(0)
+            total_loss += loss.item()
+    
+    avg_loss = total_loss / len(val_loader)
+    accuracy = total_correct / total_samples
+    return avg_loss, accuracy
+
+def train(model, train_loader, val_loader, num_epochs, device, overfit_batch=False, weight_decay=1e-4, patience=5):
+    criterion = nn.CrossEntropyLoss()
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=weight_decay)
+    
+    # Initialize early stopping
+    early_stopping = EarlyStopping(patience=patience, mode="min")
+    best_model = None
+    
+    # Training history
+    history = {
+        'train_loss': [], 'train_acc': [],
+        'val_loss': [], 'val_acc': []
+    }
+    
+    for epoch in range(num_epochs):
+        # Train
+        train_loss, train_acc = train_epoch(
+            model, train_loader, criterion, optimizer, device, overfit_batch
+        )
+        
+        # Validate
+        val_loss, val_acc = evaluate(model, val_loader, criterion, device)
+        
+        # Store history
+        history['train_loss'].append(train_loss)
+        history['train_acc'].append(train_acc)
+        history['val_loss'].append(val_loss)
+        history['val_acc'].append(val_acc)
+        
+        print(f'Epoch {epoch+1}/{num_epochs}:')
+        print(f'Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f}')
+        print(f'Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.4f}')
+        
+        # Early stopping check
+        if early_stopping.is_best(val_loss):
+            best_model = copy.deepcopy(model.state_dict())
+            
+        # If overfitting a batch, we care more about train loss going to zero
+        if overfit_batch and train_loss < 0.01:
+            print("Successfully overfitted batch!")
+            break
+            
+        if early_stopping.stop(val_loss) and not overfit_batch:
+            print("Early stopping triggered")
+            break
+    
+    # Restore best model
+    if best_model is not None and not overfit_batch:
+        model.load_state_dict(best_model)
+    
+    return model, history
+
+
+def plot_training_history(history):
+    plt.figure(figsize=(12, 4))
+    
+    # Plot loss
+    plt.subplot(1, 2, 1)
+    plt.plot(history['train_loss'], label='Train Loss')
+    plt.plot(history['val_loss'], label='Val Loss')
+    plt.title('Loss vs. Epochs')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.legend()
+    
+    # Plot accuracy
+    plt.subplot(1, 2, 2)
+    plt.plot(history['train_acc'], label='Train Acc')
+    plt.plot(history['val_acc'], label='Val Acc')
+    plt.title('Accuracy vs. Epochs')
+    plt.xlabel('Epoch')
+    plt.ylabel('Accuracy')
+    plt.legend()
+    
+    plt.tight_layout()
+    plt.show()
+
+def train_genre_classifier(dataset_path, feat_type='mel', batch_size=32, num_epochs=50):
+    # Setup device
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
+    # Create datasets
+    train_dataset = SpectrogramDataset(
+        dataset_path, 
+        class_mapping=CLASS_MAPPING,
+        train=True,
+        feat_type=feat_type
+    )
+    
+    # Create data loaders
+    train_loader, val_loader = torch_train_val_split(
+        train_dataset,
+        batch_train=batch_size,
+        batch_eval=batch_size
+    )
+    
+    # Create model
+    input_dim = train_dataset.feat_dim
+    num_classes = len(np.unique(train_dataset.labels))
+    model = GenreClassifier(input_dim, num_classes).to(device)
+    
+    # First verify the model can overfit a small batch
+    print("Testing model with batch overfitting...")
+    _, _ = train(
+        model, 
+        train_loader, 
+        val_loader, 
+        num_epochs=50,
+        device=device,
+        overfit_batch=True
+    )
+    
+    # Reset model and train normally
+    print("\nTraining full model...")
+    model = GenreClassifier(input_dim, num_classes).to(device)
+    model, history = train(
+        model,
+        train_loader,
+        val_loader,
+        num_epochs=num_epochs,
+        device=device,
+        overfit_batch=False
+    )
+    
+    # Plot training history
+    plot_training_history(history)
+    
+    return model
+
+def train_model(dataset_path, feat_type, batch_size, num_epochs, device):
+    """Train a model on specified feature type"""
+    # Create dataset
+    dataset = SpectrogramDataset(
+        dataset_path,
+        class_mapping=CLASS_MAPPING,
+        train=True,
+        feat_type=feat_type
+    )
+    
+    # Create data loaders
+    train_loader, val_loader = torch_train_val_split(
+        dataset,
+        batch_train=batch_size,
+        batch_eval=batch_size
+    )
+    
+    # Create model
+    input_dim = dataset.feat_dim
+    num_classes = len(np.unique(dataset.labels))
+    
+    model = GenreClassifier(
+        input_dim=input_dim,
+        num_classes=num_classes,
+        rnn_size=128,
+        num_layers=2,
+        dropout=0.3
+    ).to(device)
+    
+    # Train model
+    model, history = train(
+        model,
+        train_loader,
+        val_loader,
+        num_epochs=num_epochs,
+        device=device
+    )
+    
+    return {'model': model, 'history': history}
+
+
+def train_all_models(base_path, batch_size=32, num_epochs=50):
+    """Train all required LSTM models for different input types"""
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
+    
+    # Dictionary to store results
+    results = {}
+    
+    # γ) Train on mel spectrograms
+    print("\n=== Training on Mel Spectrograms ===")
+    mel_model = train_model(
+        base_path + "/fma_genre_spectrograms",
+        feat_type='mel',
+        batch_size=batch_size,
+        num_epochs=num_epochs,
+        device=device
+    )
+    results['mel'] = mel_model
+    
+    # δ) Train on beat-synced spectrograms
+    print("\n=== Training on Beat-Synced Spectrograms ===")
+    beat_model = train_model(
+        base_path + "/fma_genre_spectrograms_beat",
+        feat_type='mel',
+        batch_size=batch_size,
+        num_epochs=num_epochs,
+        device=device
+    )
+    results['beat'] = beat_model
+    
+    # ε) Train on chromagrams
+    print("\n=== Training on Chromagrams ===")
+    chroma_model = train_model(
+        base_path + "/fma_genre_spectrograms",
+        feat_type='chroma',
+        batch_size=batch_size,
+        num_epochs=num_epochs,
+        device=device
+    )
+    results['chroma'] = chroma_model
+    
+    # ζ) Train on fused features (mel + chroma)
+    print("\n=== Training on Fused Features ===")
+    fused_model = train_model(
+        base_path + "/fma_genre_spectrograms",
+        feat_type='fused',
+        batch_size=batch_size,
+        num_epochs=num_epochs,
+        device=device
+    )
+    results['fused'] = fused_model
+    
+    return results

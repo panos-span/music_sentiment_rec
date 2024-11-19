@@ -53,7 +53,7 @@ def torch_train_val_split(
 
 
 def read_spectrogram(spectrogram_file, feat_type):
-    spectrogram = np.load(spectrogram_file)
+    spectrogram = np.load(spectrogram_file).astype(np.float32)
     # spectrograms contains a fused mel spectrogram and chromagram    
     if feat_type=='mel':
         return spectrogram[:128, :].T
@@ -109,6 +109,9 @@ class SpectrogramDataset(Dataset):
         self.files, labels = self.get_files_labels(self.index, class_mapping)
         self.feats = [read_spectrogram(os.path.join(p, f), feat_type) for f in self.files]
         self.feat_dim = self.feats[0].shape[1]
+        print(f"Loaded {len(self.feats)} samples with shape {self.feats[0].shape}")
+        print(f"Class distribution: {np.unique(labels, return_counts=True)}")
+        print(f"{self.feat_dim}")
         self.lengths = [len(i) for i in self.feats]
         self.max_length = max(self.lengths) if max_length <= 0 else max_length
         self.zero_pad_and_stack = PaddingTransform(self.max_length)
@@ -141,9 +144,9 @@ class SpectrogramDataset(Dataset):
                 fname = ".".join(fname.split(".")[:-1])
             
             # necessary fixes for the custom dataset used in the lab
-            if 'fma_genre_spectrograms_beat' in self.full_path.split('/'):
+            if 'fma_genre_spectrograms_beat' in self.full_path.split('\\'):
                 fname = fname.replace('beatsync.fused', 'fused.full')            
-            if 'test' in self.full_path.split('/'):
+            if 'test' in self.full_path.split('\\'):
                 fname = fname.replace('full.fused', 'fused.full')
             
             files.append(fname)
@@ -160,7 +163,7 @@ class SpectrogramDataset(Dataset):
 
 if __name__ == "__main__":
     dataset = SpectrogramDataset(
-        "data/fma_genre_spectrograms", class_mapping=CLASS_MAPPING, train=True
+        "data/fma_genre_spectrograms", class_mapping=CLASS_MAPPING, train=True, feat_type='chroma'
     )
 
     print(dataset[10])

@@ -347,7 +347,7 @@ def train(train_loader, val_loader, num_epochs, device, overfit_batch=False, wei
         history['learning_rates'].append(optimizer.param_groups[0]['lr'])
         
         # Check if current model is the best
-        if early_stopping.is_best(valid_loss):
+        if early_stopping.is_best(valid_loss) and not overfit_batch:
             print("New best model found! Saving checkpoint.")
             torch.save({
                 'model_state_dict': model.state_dict(),
@@ -385,7 +385,8 @@ def train(train_loader, val_loader, num_epochs, device, overfit_batch=False, wei
             report = classification_report(
                 y_true_classes, 
                 y_pred_classes,
-                digits=3
+                digits=3,
+                zero_division=0,
             )
             print("\nClassification Report:")
             print(report)
@@ -429,7 +430,7 @@ def plot_training_history(history, title):
     plt.legend()
     plt.grid(True)
     plt.savefig('images/loss_plot_{}.png'.format(title))
-    plt.show()
+    #plt.show()
 
 def train_genre_classifier(dataset_path, feat_type='mel', batch_size=32, num_epochs=100, is_beat_sync=False):    
     
@@ -467,9 +468,9 @@ def train_genre_classifier(dataset_path, feat_type='mel', batch_size=32, num_epo
     #       = epochs * n_batches * batch_size
     #       = epochs * n_batches * k * (batch_size/k)
     # Thus, to keep roughly same total we do:
-    #num_epochs *= (batch_size // k) + 1
+    num_epochs *= (batch_size // k) + 1
     # But we will use at most 200 epochs
-    #num_epochs = min(num_epochs, 200)
+    num_epochs = min(num_epochs, 200)
     print(f'Overfit Batch mode. The dataset now comprises of only {k} Batches. '
           f'Epochs increased to {num_epochs}.')
     _, history = train(
@@ -495,11 +496,11 @@ def train_genre_classifier(dataset_path, feat_type='mel', batch_size=32, num_epo
     )
     
     # Plot training history
-    plot_training_history(history)
+    plot_training_history(history, title=f"{feat_type}_full")
     
     return model
 
-def train_all_models(base_path, device, batch_size=32, num_epochs=50):
+def train_all_models(base_path, batch_size=32, num_epochs=50):
     """Train all required LSTM models for different input types"""
     
     # Dictionary to store results
@@ -513,8 +514,8 @@ def train_all_models(base_path, device, batch_size=32, num_epochs=50):
         batch_size=batch_size,
         num_epochs=num_epochs,
     )
-    results['mel'] = mel_model
-    
+    results['mel'] = {'model': mel_model, 'type': 'regular'}
+        
     # δ) Train on beat-synced spectrograms
     print("\n=== Training on Beat-Synced Spectrograms ===")
     beat_model = train_genre_classifier(
@@ -523,8 +524,8 @@ def train_all_models(base_path, device, batch_size=32, num_epochs=50):
         batch_size=batch_size,
         num_epochs=num_epochs,
     )
-    results['beat'] = beat_model
-    
+    results['beat'] = {'model': beat_model, 'type': 'beat'}
+        
     # ε) Train on chromagrams
     print("\n=== Training on Chromagrams ===")
     chroma_model = train_genre_classifier(
@@ -533,8 +534,8 @@ def train_all_models(base_path, device, batch_size=32, num_epochs=50):
         batch_size=batch_size,
         num_epochs=num_epochs,
     )
-    results['chroma'] = chroma_model
-    
+    results['chroma'] = {'model': chroma_model, 'type': 'regular'}
+        
     # ζ) Train on fused features (mel + chroma)
     print("\n=== Training on Fused Features ===")
     fused_model = train_genre_classifier(
@@ -543,8 +544,8 @@ def train_all_models(base_path, device, batch_size=32, num_epochs=50):
         batch_size=batch_size,
         num_epochs=num_epochs,
     )
-    results['fused'] = fused_model
-    
+    results['fused'] = {'model': fused_model, 'type': 'regular'}
+        
     return results
 
 def evaluate_models_on_test(base_path, model_dict, device, batch_size):
@@ -583,14 +584,13 @@ def evaluate_models_on_test(base_path, model_dict, device, batch_size):
         model = model_info['model']
         model.eval()
         
-        if model_name == 'beat':
-            results[model_name] = evaluate_on_test_set(
-                model, beat_loader,criterion, device, description="Beat-Synced Spectrograms"
-            )
-        else:
-            results[model_name] = evaluate_on_test_set(
-                model, regular_loader, criterion, device, description="Regular Spectrograms"
-            )    
+        # Use appropriate test loader based on model type
+        test_loader = beat_loader if model_info['type'] == 'beat' else regular_loader
+        description = f"{model_name.capitalize()} Model on {'Beat-Synced' if model_info['type'] == 'beat' else 'Regular'} Test Set"
+        
+        results[model_name] = evaluate_on_test_set(
+            model, test_loader, criterion, device, description=description
+        )
     
     return results
 
@@ -604,8 +604,8 @@ def evaluate_on_test_set(model, test_loader, criterion, device, description=""):
     _ , y_pred , y_true = eval_epoch(model, test_loader, criterion, device)
     
     # Move tensors to CPU and ensure integers
-    y_pred = y_pred.cpu().numpy()
-    y_true = y_true.cpu().numpy()
+    y_pred = y_pred.cpu().numpy().ravel()
+    y_true = y_true.cpu().numpy().ravel()
     
     # Calculate all metrics
     report = classification_report(
@@ -614,6 +614,7 @@ def evaluate_on_test_set(model, test_loader, criterion, device, description=""):
         target_names=class_names,
         digits=3,
         zero_division=0,
+        labels=np.arange(num_classes),  # Ensure all classes are present
         output_dict=True
     )
     
@@ -621,7 +622,7 @@ def evaluate_on_test_set(model, test_loader, criterion, device, description=""):
     print(f"\nResults for {description}:")
     print(f"Accuracy: {report['accuracy']:.4f}")
     print("\nPer-class metrics:")
-    print(classification_report(y_true, y_pred, target_names=class_names))
+    print(classification_report(y_true, y_pred, target_names=class_names,zero_division=0))
     
     cm = confusion_matrix(y_pred, y_true, normalize='true')
     plot_confusion_matrix(cm, classes=test_loader.dataset.labels, normalize=True, title=f'{description} Validation Confusion Matrix')
@@ -640,7 +641,7 @@ def evaluate_on_test_set(model, test_loader, criterion, device, description=""):
 
 if __name__ == '__main__':
     # Train all models
-    results = train_all_models(base_path=base_path, device=device, num_epochs=num_epochs)
+    results = train_all_models(base_path=base_path, num_epochs=num_epochs)
     
     # Evaluate on test sets
     test_results = evaluate_models_on_test(

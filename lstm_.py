@@ -547,9 +547,10 @@ def train_all_models(base_path, device, batch_size=32, num_epochs=50):
     
     return results
 
-def evaluate_models_on_test(base_path, model_dict, device,batch_size):
+def evaluate_models_on_test(base_path, model_dict, device, batch_size):
     """Evaluate trained models on both test sets"""
     results = {}
+    criterion = nn.CrossEntropyLoss()
     
     # Create test datasets
     regular_test = SpectrogramDataset(
@@ -564,16 +565,32 @@ def evaluate_models_on_test(base_path, model_dict, device,batch_size):
     )
     
     # Create test loaders
-    regular_loader = DataLoader(regular_test, batch_size=batch_size)
-    beat_loader = DataLoader(beat_test, batch_size=batch_size)
+    regular_loader, _ = torch_train_val_split(
+        regular_test,
+        batch_train=batch_size,
+        batch_eval=batch_size,
+        val_size=0.0
+    )
+    
+    beat_loader, _ = torch_train_val_split(
+        beat_test,
+        batch_train=batch_size,
+        batch_eval=batch_size,
+        val_size=0.0
+    )
     
     for model_name, model_info in model_dict.items():
         model = model_info['model']
         model.eval()
-        results[model_name] = {
-            'regular': evaluate_on_test_set(model, regular_loader, device, f"{model_name} on Regular Test Set"),
-            'beat': evaluate_on_test_set(model, beat_loader, device, f"{model_name} on Beat-synced Test Set")
-        }
+        
+        if model_name == 'beat':
+            results[model_name] = evaluate_on_test_set(
+                model, beat_loader,criterion, device, description="Beat-Synced Spectrograms"
+            )
+        else:
+            results[model_name] = evaluate_on_test_set(
+                model, regular_loader, criterion, device, description="Regular Spectrograms"
+            )    
     
     return results
 
@@ -607,7 +624,7 @@ def evaluate_on_test_set(model, test_loader, criterion, device, description=""):
     print(classification_report(y_true, y_pred, target_names=class_names))
     
     cm = confusion_matrix(y_pred, y_true, normalize='true')
-    plot_confusion_matrix(cm, classes=test_loader.dataset.labels, normalize=True, title='Validation Confusion Matrix')
+    plot_confusion_matrix(cm, classes=test_loader.dataset.labels, normalize=True, title=f'{description} Validation Confusion Matrix')
 
     
     return {

@@ -1,0 +1,299 @@
+\documentclass[a4paper,12pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[LGR,T1]{fontenc}
+\usepackage{alphabeta}
+\usepackage{amsmath}
+\usepackage{float}
+\usepackage{multirow}
+\usepackage{amsfonts}
+\usepackage{amssymb}
+\usepackage{graphicx}
+\usepackage{listings}
+\usepackage{booktabs}  % For better looking tables
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{breakurl}
+\usepackage[numbers]{natbib}
+
+\lstset{
+  basicstyle=\ttfamily\footnotesize,
+  keywordstyle=\color{blue},
+  commentstyle=\color{gray},
+  stringstyle=\color{red},
+  showstringspaces=false,
+  breaklines=true,
+  frame=single,
+  language=R,
+  extendedchars=true,
+  literate={β}{{\beta}}1
+}
+
+\title{Αναγνώριση Προτύπων \\ 1η Εργαστηριακή Άσκηση \\ Χειμερινό Εξάμηνο 2024-2025 \\ Ε.ΔE.ΜΜ}
+\author{Σπανάκης Παναγιώτης-Αλέξιος (ΑΜ: 03400274)}
+\date{08/11/2024}
+
+\begin{document}
+
+\maketitle
+
+\section*{Βήμα 1: Εξοικείωση με φασματογραφήματα στην κλίμακα mel}
+
+\subsection*{α, β, γ) Ανάλυση των φασματογραφημάτων Mel}
+Εξετάζοντας τα δύο παραδείγματα (Rock - Αρχείο 104085 και Electronic - Αρχείο 1334), παρατηρούμε τα εξής διακριτά χαρακτηριστικά:
+
+\textbf{Είδος Rock (Αρχείο 104085):}
+\begin{itemize}
+    \item Υψηλότερο ενεργειακό περιεχόμενο σε όλο το εύρος συχνοτήτων (0-10000 Hz)
+    \item Έντονη παρουσία στις μεσαίες συχνότητες (2000-6000 Hz)
+    \item Σαφή κατακόρυφα μοτίβα που υποδεικνύουν τακτικά ρυθμικά στοιχεία
+    \item Σταθερή ενέργεια στις χαμηλές συχνότητες που δείχνει έντονη παρουσία μπάσου/ντραμς
+    \item Πιο ομοιόμορφη κατανομή ενέργειας που υποδηλώνει χρήση παραδοσιακών οργάνων
+\end{itemize}
+
+\textbf{Είδος Electronic (Αρχείο 1334):}
+\begin{itemize}
+    \item Συγκέντρωση ενέργειας στις χαμηλές συχνότητες (0-4000 Hz)
+    \item Λιγότερο ομοιόμορφη φασματική κατανομή
+    \item Πιο σποραδικά μοτίβα στις υψηλές συχνότητες
+    \item Μεταβλητά χρονικά μοτίβα τυπικά των συνθετικών ήχων
+    \item Λιγότερο καθορισμένες κατακόρυφες γραμμές, υποδεικνύοντας διαφορετικές ρυθμικές δομές
+\end{itemize}
+
+\subsection*{δ) Η Κλίμακα Mel}
+Η κλίμακα Mel είναι μια αντιληπτική κλίμακα συχνοτήτων που αναπτύχθηκε για να ταιριάζει με τον τρόπο που οι άνθρωποι αντιλαμβάνονται τις διαφορές τόνου.
+
+\textbf{1. Ορισμός και Δημιουργία:}
+\begin{itemize}
+    \item Δημιουργήθηκε μέσω πειραμάτων όπου οι ακροατές αναγνώριζαν ζεύγη ήχων που αντιλαμβάνονταν ως ισαπέχοντα σε τόνο
+    \item Τύπος: $mel = 2595 \cdot \log_{10}(1 + \frac{f}{700})$, όπου f η συχνότητα σε Hz
+    \item Περίπου γραμμική κάτω από 1000 Hz και λογαριθμική πάνω από αυτή
+\end{itemize}
+
+\textbf{2. Χρήση στην Επεξεργασία Μουσικής:}
+\begin{itemize}
+    \item Καλύτερη αναπαράσταση της ανθρώπινης ακουστικής αντίληψης
+    \item Παρέχει μεγαλύτερη ανάλυση στις χαμηλές συχνότητες όπου η ανθρώπινη ακοή είναι πιο ευαίσθητη
+    \item Μειώνει την υπολογιστική πολυπλοκότητα διατηρώντας τις αντιληπτικά σημαντικές πληροφορίες
+    \item Βελτιώνει την απόδοση στην ταξινόμηση και ανάλυση μουσικής
+\end{itemize}
+
+\section*{Βήμα 2: Συγχρονισμός φασματογραφημάτων στο ρυθμό της μουσικής}
+
+\subsection*{α) Ανάλυση Διαστάσεων}
+
+\textbf{Διαστάσεις Φασματογραφημάτων:}
+\begin{itemize}
+   \item Τα αρχικά φασματογραφήματα έχουν περίπου 1291-1293 χρονικά βήματα
+   \item Κάθε χρονικό βήμα περιέχει 140 χαρακτηριστικά (128 για mel + 12 για chroma)
+\end{itemize}
+
+\textbf{Αποδοτικότητα LSTM:}
+\begin{itemize}
+   \item Η εκπαίδευση LSTM με τόσα πολλά χρονικά βήματα δεν είναι αποδοτική για τους εξής λόγους:
+   \begin{enumerate}
+       \item \textbf{Υπολογιστική Πολυπλοκότητα:}
+       \begin{itemize}
+           \item Τα LSTM πρέπει να επεξεργαστούν κάθε χρονικό βήμα διαδοχικά
+           \item Μεγάλες ακολουθίες αυξάνουν σημαντικά τον χρόνο εκπαίδευσης
+           \item Απαιτούν περισσότερη μνήμη για την αποθήκευση των ενδιάμεσων καταστάσεων
+       \end{itemize}
+       
+       \item \textbf{Πρόβλημα Εξαφανιζόμενης Κλίσης:}
+       \begin{itemize}
+           \item Μεγάλες ακολουθίες επιδεινώνουν το πρόβλημα των εξαφανιζόμενων κλίσεων
+           \item Δυσκολεύουν την εκμάθηση μακροπρόθεσμων εξαρτήσεων
+       \end{itemize}
+       
+       \item \textbf{Περιττή Πληροφορία:}
+       \begin{itemize}
+           \item Πολλά διαδοχικά χρονικά βήματα μπορεί να περιέχουν παρόμοια πληροφορία
+           \item Δεν είναι απαραίτητη τόσο λεπτομερής χρονική ανάλυση για την ταξινόμηση είδους
+       \end{itemize}
+   \end{enumerate}
+\end{itemize}
+
+\subsection*{β) Ανάλυση Beat-Synchronized Φασματογραφημάτων}
+
+\textbf{Σύγκριση με τα Αρχικά Φασματογραφήματα:}
+\begin{itemize}
+   \item \textbf{Πλεονεκτήματα:}
+   \begin{enumerate}
+       \item \textbf{Μειωμένη Διάσταση:}
+       \begin{itemize}
+           \item Σημαντικά λιγότερα χρονικά βήματα
+           \item Πιο αποδοτική επεξεργασία και εκπαίδευση
+       \end{itemize}
+       
+       \item \textbf{Μουσική Σημασία:}
+       \begin{itemize}
+           \item Ευθυγράμμιση με τη ρυθμική δομή της μουσικής
+           \item Καλύτερη αναπαράσταση των μουσικών γεγονότων
+       \end{itemize}
+       
+       \item \textbf{Ποιότητα Χαρακτηριστικών:}
+       \begin{itemize}
+           \item Διατήρηση των σημαντικών φασματικών χαρακτηριστικών
+           \item Μείωση του θορύβου μέσω της διαμέσου
+       \end{itemize}
+   \end{enumerate}
+   
+   \item \textbf{Διαφορές στην Οπτικοποίηση:}
+   \begin{itemize}
+       \item Πιο ευδιάκριτα ρυθμικά μοτίβα
+       \item Καλύτερη αναπαράσταση της μουσικής δομής
+       \item Ομαλότερη χρονική εξέλιξη των χαρακτηριστικών
+   \end{itemize}
+\end{itemize}
+
+\textbf{Συμπέρασμα:}
+Ο συγχρονισμός με το ρυθμό προσφέρει μια πιο συμπαγή και μουσικά σημαντική αναπαράσταση, κατάλληλη για εκπαίδευση νευρωνικών δικτύων, διατηρώντας παράλληλα τα ουσιώδη χαρακτηριστικά για την ταξινόμηση του μουσικού είδους.
+
+\section*{Βήμα 3: Εξοικείωση με χρωμογραφήματα}
+
+Αναλύοντας τα χρωμογραφήματα για τα ίδια δύο αρχεία παρατηρούμε διαφορετικά αρμονικά χαρακτηριστικά:
+
+\textbf{Είδος Rock (Αρχείο 104085):}
+\begin{itemize}
+    \item Σαφής αρμονική δομή με καθορισμένα μοτίβα νοτών
+    \item Έντονη παρουσία σε συγκεκριμένες τάξεις τόνου (κυρίως E)
+    \item Τακτικά μοτίβα που υποδεικνύουν σταθερές ακολουθίες συγχορδιών
+    \item Καλά καθορισμένες μεταβάσεις μεταξύ διαφορετικού αρμονικού περιεχομένου
+\end{itemize}
+
+\textbf{Είδος Electronic (Αρχείο 1334):}
+\begin{itemize}
+    \item Πιο διάχυτη κατανομή ενέργειας στις τάξεις τόνου
+    \item Έντονη δραστηριότητα στην περιοχή της νότας A
+    \item Λιγότερο καθορισμένες αρμονικές ακολουθίες
+    \item Θολές μεταβάσεις μεταξύ νοτών
+\end{itemize}
+
+\textbf{Βασικές Παρατηρήσεις για τα Χρωμογραφήματα:}
+\begin{enumerate}
+    \item \textbf{Αναπαράσταση:}
+    \begin{itemize}
+        \item Δείχνει την κατανομή ενέργειας στις 12 τάξεις τόνου (C έως B)
+        \item Συμπτύσσει τις πληροφορίες οκτάβας για εστίαση στο αρμονικό περιεχόμενο
+        \item Η φωτεινότητα υποδεικνύει την ένταση κάθε τάξης τόνου
+    \end{itemize}
+    
+    \item \textbf{Οφέλη Μουσικής Ανάλυσης:}
+    \begin{itemize}
+        \item Αποκαλύπτει την αρμονική δομή ανεξάρτητα από την οκτάβα
+        \item Ανθεκτικό στις αλλαγές ηχοχρώματος διατηρώντας τις αρμονικές πληροφορίες
+        \item Χρήσιμο για την ανάλυση ακολουθιών συγχορδιών
+        \item Βοηθά στην αναγνώριση τονικότητας και τροπικού περιεχομένου
+    \end{itemize}
+\end{enumerate}
+
+Οι εκδόσεις συγχρονισμένες με το ρυθμό (beat-synchronized) ευθυγραμμίζουν αυτά τα χαρακτηριστικά με το μουσικό παλμό, καθιστώντας τα χρονικά μοτίβα πιο εμφανή και ευκολότερα στην ανάλυση.
+
+
+\section*{Βήμα 4: Φόρτωση και ανάλυση δεδομένων}
+
+\subsection*{α) Ανάλυση Κώδικα PyTorch Dataset}
+
+Ο κώδικας υλοποιεί τις εξής βασικές λειτουργίες:
+
+\begin{enumerate}
+   \item \textbf{Κλάση SpectrogramDataset:}
+   \begin{itemize}
+       \item Κληρονομεί από την torch.utils.data.Dataset
+       \item Διαχειρίζεται τη φόρτωση και προεπεξεργασία των φασματογραφημάτων
+       \item Υποστηρίζει τόσο mel όσο και chroma χαρακτηριστικά
+   \end{itemize}
+
+   \item \textbf{Βασικές Λειτουργίες:}
+   \begin{itemize}
+       \item \texttt{read\_spectrogram}: Φορτώνει και διαχωρίζει τα mel και chroma χαρακτηριστικά
+       \item \texttt{get\_files\_labels}: Διαβάζει τα ονόματα αρχείων και τις ετικέτες
+       \item \texttt{PaddingTransform}: Εξασφαλίζει ομοιόμορφο μήκος για όλα τα δείγματα
+       \item \texttt{LabelTransformer}: Μετατρέπει τις ετικέτες σε αριθμητική μορφή
+   \end{itemize}
+
+   \item \textbf{Επεξεργασία Δειγμάτων:}
+   \begin{itemize}
+       \item Μετατροπή σε numpy arrays τύπου float32
+       \item Προσθήκη padding όπου χρειάζεται
+       \item Κωδικοποίηση ετικετών
+   \end{itemize}
+\end{enumerate}
+
+\subsection*{β) Συγχώνευση Κλάσεων}
+
+Το CLASS\_MAPPING υλοποιεί:
+\begin{itemize}
+   \item Συγχώνευση παρόμοιων μουσικών ειδών:
+   \begin{itemize}
+       \item "Psych-Rock", "Post-Rock" $\rightarrow$ "Rock"
+       \item "Punk" $\rightarrow$ "Metal"
+       \item "Chiptune" $\rightarrow$ "Electronic"
+   \end{itemize}
+   \item Αφαίρεση προβληματικών κλάσεων (None):
+   \begin{itemize}
+       \item "Indie-Rock", "Post-Punk"
+       \item "Soundtrack", "International"
+       \item "Old-Time"
+   \end{itemize}
+\end{itemize}
+
+\subsection*{γ) Ανάλυση Κατανομής Κλάσεων}
+
+\textbf{1. Αρχική Κατανομή (Initial Distribution):}
+\begin{itemize}
+   \item 20 διαφορετικές κλάσεις (classes)
+   \item Μέσος αριθμός δειγμάτων ανά κλάση: ~160 samples
+   \item Εύρος: 90-160 samples ανά κλάση
+   \item Παρουσία class imbalance με μερικές υποεκπροσωπούμενες κλάσεις
+\end{itemize}
+
+\textbf{2. Κατανομή Μετά το Class Mapping:}
+\begin{itemize}
+   \item Μείωση σε 10 βασικές κλάσεις
+   \item Νέα κατανομή δειγμάτων:
+   \begin{itemize}
+       \item Rock: ~320 samples (συγχώνευση Rock, Psych-Rock, Post-Rock)
+       \item Folk: ~320 samples (συγχώνευση Folk, Psych-Folk)
+       \item Metal: ~310 samples (συγχώνευση Metal, Punk)
+       \item Electronic: ~410 samples (συγχώνευση Electronic, Chiptune)
+       \item Pop: ~140 samples
+       \item Άλλες κλάσεις (Trip-Hop, Blues, Jazz, κλπ.): 150-160 samples
+   \end{itemize}
+\end{itemize}
+
+\textbf{3. Επιπτώσεις του Class Mapping:}
+\begin{enumerate}
+   \item \textbf{Dataset Balance:}
+   \begin{itemize}
+       \item Βελτιωμένη αντιπροσώπευση των κύριων μουσικών genres
+       \item Ελαφρώς αυξημένο class imbalance μεταξύ των μεγάλων (Rock, Electronic) και μικρών κλάσεων
+       \item Πιο στιβαρό dataset για training
+   \end{itemize}
+   
+   \item \textbf{Training Implications:}
+   \begin{itemize}
+       \item Καλύτερη generalization λόγω περισσότερων samples ανά κλάση
+       \item Πιθανή ανάγκη για class weights στο training
+       \item Reduced overfitting risk για τις συγχωνευμένες κλάσεις
+   \end{itemize}
+   
+   \item \textbf{Model Performance:}
+   \begin{itemize}
+       \item Αναμενόμενη βελτίωση στο classification των κύριων genres
+       \item Πιθανή μείωση confusion μεταξύ παρόμοιων υποκατηγοριών
+       \item Καλύτερη robustness στο testing
+   \end{itemize}
+\end{enumerate}
+
+\textbf{4. Προτεινόμενες Στρατηγικές:}
+\begin{itemize}
+   \item Χρήση class weights στο loss function για αντιμετώπιση του imbalance
+   \item Εφαρμογή data augmentation για τις μικρότερες κλάσεις
+   \item Monitoring του validation score ανά κλάση
+   \item Cross-validation για αξιολόγηση της robustness του μοντέλου
+\end{itemize}
+
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+\end{document}

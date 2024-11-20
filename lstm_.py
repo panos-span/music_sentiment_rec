@@ -270,7 +270,7 @@ def train_epoch(model, train_loader, optimizer, criterion, device):
     
         # Forward pass
         optimizer.zero_grad()
-        output = model.forward(specs, lengths)
+        output = model(specs, lengths)
         preds_all = torch.cat((preds_all, output), dim=0)
         
         loss = criterion(output, labels)
@@ -298,7 +298,7 @@ def eval_epoch(model, val_loader, criterion, device=device):
         for specs, labels, lengths in val_loader:
             specs, labels = specs.to(device), labels.to(device)
             
-            logits = model.forward(specs, lengths)
+            logits = model(specs, lengths)
             loss = criterion(logits, labels)
             
             running_loss += loss.item()

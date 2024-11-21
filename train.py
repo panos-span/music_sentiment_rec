@@ -1,52 +1,82 @@
+import torch
+import os
+
+from dataset import SpectrogramDataset, torch_train_val_split, CLASS_MAPPING
 from convolution import CNNBackbone
 from lstm import LSTMBackbone
-from modules import Classifier, MultitaskRegressor, Regressor
+from modules import Classifier
+from train_utils import train
 
+class Training(object):
+    def __init__(self, model, train_loader, val_loader, optimizer, epochs, save_path, device, overfit_batch):
+        self.model = model
+        self.train_loader = train_loader
+        self.val_loader = val_loader
+        self.optimizer = optimizer
+        self.epochs = epochs
+        self.save = save_path
+        self.device = device
+        self.overfit_batch = overfit_batch
 
-def save_checkpoint(model):
-    raise NotImplementedError("You need to implement this")
-
-
-def training_loop(model, train_dataloader, optimizer, device="cuda"):
-    for batch in train_dataloader:
-        raise NotImplementedError("You need to implement this")
-
-    return ...  # Return train_loss and anything else you need
-
-
-def validation_loop(model, val_dataloader, device="cuda"):
-    for batch in val_dataloader:
-        raise NotImplementedError("You need to implement this")
-
-    return ...  # Return validation_loss and anything else you need
-
-
-def overfit_with_a_couple_of_batches(model, train_dataloader):
-    epochs = 10000  # An absurd number of epochs
-    # TODO: select a couple of batches from the dataloader
-    # TODO: Run the training loop for an absurd amount of epochs
-    raise NotImplementedError("You need to implement this")
-
-
-def train(model, train_dataloader, val_dataloader, optimizer, epochs, device="cuda", overfit_batch=False):
-    if overfit_batch:
-        overfit_with_a_couple_of_batches(model, train_dataloader)
-    else:
-        for epoch in range(epochs):
-            # TODO: training loop
-            # TODO: validation loop
-            # TODO: early stopping
-    raise NotImplementedError("You need to implement this")
+    def train_with_eval(self):
+        train(self.model, self.train_loader, self.val_loader, self.optimizer, self.epochs, self.save_path, self.device, self.overfit_batch)
+        ## to implement to return losses
+        return None
 
 
 if __name__ == "__main__":
-    backbone = ...
-    model = ...
-    optimizer = ...
-    epochs = ...
-    train_dataloader = ...
-    val_dataloader = ...
-    device = ...
-    overfit_batch = ...
-    train(model, train_dataloader, val_dataloader, optimizer, epochs, device=device, overfit_batch=overfit_batch)
+    DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"Using device: {DEVICE}")
+    
+    # Data Params
+    dataset_path = './data/fma_genre_spectrograms'
+    batch_size = 32
+    max_length = 150
+    feat_type = 'mel'
+    train_data = True
 
+    # Create datasets
+    train_dataset = SpectrogramDataset(
+        dataset_path, 
+        class_mapping=CLASS_MAPPING,
+        train=train_data,
+        max_length=max_length,
+        feat_type=feat_type
+    )
+    
+    # Create data loaders
+    train_loader, val_loader = torch_train_val_split(
+        train_dataset,
+        batch_train=batch_size,
+        batch_eval=batch_size,
+    )
+
+    # Training Hyperparams
+    epochs = 5
+    overfit_batch = True
+
+    # Directory to save checkpoints
+    checkpoint_dir = './checkpoints'
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    CP_PATH = 'checkpoint.pth'
+    cp_path = os.path.join(checkpoint_dir, CP_PATH)
+
+    # LSTM Hyperparams
+    dropout = 0.4
+    rnn_size = 8
+    num_layers = 1
+    bidirectional = False
+    num_classes = 10
+
+    # init models
+    backbone = LSTMBackbone
+    model = Classifier(num_classes, backbone)
+
+    # Optimizer
+    lr = 1e-4
+    weight_decay = 1e-4
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+    
+    # init training
+    lstm_ = Training(model, train_loader, val_loader, optimizer, epochs, cp_path, DEVICE, overfit_batch=overfit_batch)
+    lstm_.train_with_eval()

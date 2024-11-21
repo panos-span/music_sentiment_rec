@@ -19,7 +19,7 @@ class Training(object):
         self.overfit_batch = overfit_batch
 
     def train_with_eval(self):
-        train(self.model, self.train_loader, self.val_loader, self.optimizer, self.epochs, self.save_path, self.device, self.overfit_batch)
+        train(self.model, self.train_loader, self.val_loader, self.optimizer, self.epochs, self.save, self.device, self.overfit_batch)
         ## to implement to return losses
         return None
 
@@ -52,7 +52,7 @@ if __name__ == "__main__":
     )
 
     # Training Hyperparams
-    epochs = 5
+    epochs = 100
     overfit_batch = True
 
     # Directory to save checkpoints
@@ -62,14 +62,15 @@ if __name__ == "__main__":
     cp_path = os.path.join(checkpoint_dir, CP_PATH)
 
     # LSTM Hyperparams
-    dropout = 0.4
-    rnn_size = 8
+    input_dim = train_dataset.feat_dim
+    dropout = 0.0
+    rnn_size = 4
     num_layers = 1
     bidirectional = False
     num_classes = 10
 
-    # init models
-    backbone = LSTMBackbone
+    # init LSTM
+    backbone = LSTMBackbone(input_dim, rnn_size, num_layers, bidirectional, dropout)
     model = Classifier(num_classes, backbone)
 
     # Optimizer
@@ -79,4 +80,21 @@ if __name__ == "__main__":
     
     # init training
     lstm_ = Training(model, train_loader, val_loader, optimizer, epochs, cp_path, DEVICE, overfit_batch=overfit_batch)
+    # start training
     lstm_.train_with_eval()
+
+
+    # CNN Hyperparams
+    input_shape = (train_dataset.max_length, train_dataset.feat_dim)
+    cnn_in_channels = 1
+    cnn_filters = [32, 64, 128, 256]
+    cnn_out_feature_size = 1000
+
+    # init CNN
+    backbone = CNNBackbone(input_shape, cnn_in_channels, cnn_filters, cnn_out_feature_size)
+    model = Classifier(num_classes, backbone)
+    
+    # init training
+    cnn_ = Training(model, train_loader, val_loader, optimizer, epochs, cp_path, DEVICE, overfit_batch=overfit_batch)
+    # start training
+    cnn_.train_with_eval()

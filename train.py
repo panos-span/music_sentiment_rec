@@ -94,6 +94,9 @@ if __name__ == "__main__":
     backbone = CNNBackbone(input_shape, cnn_in_channels, cnn_filters, cnn_out_feature_size)
     model = Classifier(num_classes, backbone)
     
+    # init optimizer
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+
     # init training
     cnn_ = Training(model, train_loader, val_loader, optimizer, epochs, cp_path, DEVICE, overfit_batch=overfit_batch)
     # start training

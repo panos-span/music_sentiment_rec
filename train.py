@@ -6,6 +6,7 @@ from convolution import CNNBackbone
 from lstm import LSTMBackbone
 from modules import Classifier
 from train_utils import train
+from ast_nn import ASTBackbone
 
 class Training(object):
     def __init__(self, model, train_loader, val_loader, optimizer, epochs, save_path, device, overfit_batch):
@@ -101,3 +102,20 @@ if __name__ == "__main__":
     cnn_ = Training(model, train_loader, val_loader, optimizer, epochs, cp_path, DEVICE, overfit_batch=overfit_batch)
     # start training
     cnn_.train_with_eval()
+
+    # AST Hyperparams
+    input_fdim = 128
+    input_tdim = 150
+    feature_size = 100
+
+    # init AST
+    backbone = ASTBackbone(input_fdim=input_fdim, input_tdim=input_tdim, feature_size=feature_size)
+    model = Classifier(10, backbone)
+    
+    # init optimizer
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+
+    # init training
+    ast_ = Training(model, train_loader, val_loader, optimizer, epochs, cp_path, DEVICE, overfit_batch=overfit_batch)
+    # start training
+    ast_.train_with_eval()

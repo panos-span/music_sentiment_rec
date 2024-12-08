@@ -124,6 +124,8 @@ class LSTMBackbone(nn.Module):
             dropout=dropout,
         )
         self.drop = nn.Dropout(dropout)
+        
+        
 
     def forward(self, x, lengths):
         """LSTM forward

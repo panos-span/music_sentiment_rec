@@ -31,25 +31,63 @@ CLASS_MAPPING = {
 
 
 def torch_train_val_split(
-    dataset, batch_train, batch_eval, val_size=0.2, shuffle=True, seed=420
+    dataset, batch_train, batch_eval, val_size=0.2, shuffle=True, seed=420, test=False
 ):
-    # Creating data indices for training and validation splits:
+    """
+    Split a dataset into training, validation, and optionally test sets with PyTorch DataLoader.
+    
+    Args:
+        dataset: PyTorch Dataset object
+        batch_train: Batch size for training
+        batch_eval: Batch size for validation/test
+        val_size: Size of validation (and test if test=True) set as fraction of total dataset
+        shuffle: Whether to shuffle the indices before splitting
+        seed: Random seed for reproducibility
+        test: If True, creates three splits (train/val/test) instead of two (train/val)
+    
+    Returns:
+        train_loader: DataLoader for training set
+        val_loader: DataLoader for validation set
+        test_loader: DataLoader for test set if test=True, else None
+    """
+    # Calculate dataset size and create indices
     dataset_size = len(dataset)
     indices = list(range(dataset_size))
-    val_split = int(np.floor(val_size * dataset_size))
+    
     if shuffle:
         np.random.seed(seed)
         np.random.shuffle(indices)
-    train_indices = indices[val_split:]
-    val_indices = indices[:val_split]
-
-    # Creating PT data samplers and loaders:
+    
+    if test:
+        # For test mode, we want three equal splits
+        # If val_size is 0.2, we want:
+        # - test_size = 0.1 (half of val_size)
+        # - val_size = 0.1 (half of val_size)
+        # - train_size = 0.8 (remaining portion)
+        split_size = int(np.floor(val_size * dataset_size / 2))
+        
+        # Create the splits
+        test_indices = indices[:split_size]  # First portion for test
+        val_indices = indices[split_size:split_size * 2]  # Second portion for validation
+        train_indices = indices[split_size * 2:]  # Remainder for training
+    else:
+        # For validation-only mode, we want two splits
+        val_split = int(np.floor(val_size * dataset_size))
+        val_indices = indices[:val_split]
+        train_indices = indices[val_split:]
+        test_indices = None
+    
+    # Create samplers
     train_sampler = SubsetRandomSampler(train_indices)
     val_sampler = SubsetRandomSampler(val_indices)
-
+    test_sampler = SubsetRandomSampler(test_indices) if test else None
+    
+    # Create data loaders
     train_loader = DataLoader(dataset, batch_size=batch_train, sampler=train_sampler)
     val_loader = DataLoader(dataset, batch_size=batch_eval, sampler=val_sampler)
-    return train_loader, val_loader
+    test_loader = DataLoader(dataset, batch_size=batch_eval, sampler=test_sampler) if test else None
+    
+    return train_loader, val_loader, test_loader
 
 
 def read_spectrogram(spectrogram_file, feat_type):
@@ -98,11 +136,12 @@ class PaddingTransform(object):
 
 class SpectrogramDataset(Dataset):
     def __init__(
-        self, path, class_mapping=None, train=True, feat_type='mel', max_length=-1, regression=None
+        self, path, class_mapping=None, train=True, feat_type='mel', max_length=-1, regression=None, multitask=False
     ):
         t = "train" if train else "test"
         p = os.path.join(path, t)
         self.regression = regression
+        self.multitask = multitask
 
         self.full_path = p
         self.index = os.path.join(path, "{}_labels.txt".format(t))
@@ -132,7 +171,7 @@ class SpectrogramDataset(Dataset):
             if self.regression:
                 l = l[0].split(",")
                 files.append(l[0] + ".fused.full.npy")
-                labels.append(l[self.regression])
+                labels.append(l[self.regression]) if not self.multitask else labels.append(l[1:])
                 continue
             label = l[1]
             if class_mapping:
@@ -144,9 +183,9 @@ class SpectrogramDataset(Dataset):
                 fname = ".".join(fname.split(".")[:-1])
             
             # necessary fixes for the custom dataset used in the lab
-            if 'fma_genre_spectrograms_beat' in self.full_path.split('\\'):
+            if 'fma_genre_spectrograms_beat' in self.full_path.split('/'):
                 fname = fname.replace('beatsync.fused', 'fused.full')            
-            if 'test' in self.full_path.split('\\'):
+            if 'test' in self.full_path.split('/'):
                 fname = fname.replace('full.fused', 'fused.full')
             
             files.append(fname)

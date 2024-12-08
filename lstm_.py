@@ -254,6 +254,8 @@ class GenreClassifier(nn.Module):
         # Fully connected layer
         x = self.classifier(x)
         return x
+    
+    
         
 def train_epoch(model, train_loader, optimizer, criterion, device):
     model.train()
@@ -631,7 +633,7 @@ def evaluate_on_test_set(model, test_loader, criterion, device, description=""):
     return {
         'accuracy': report['accuracy'],
         'per_class_metrics': {
-            class_name: metrics for class_name, metrics in report.items() 
+            class_name: metrics for class_name, metrics in report.items()
             if class_name not in ['accuracy', 'macro avg', 'weighted avg']
         },
         'macro_avg': report['macro avg'],

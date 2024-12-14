@@ -28,7 +28,7 @@
   literate={β}{{\beta}}1
 }
 
-\title{Αναγνώριση Προτύπων \\ 1η Εργαστηριακή Άσκηση \\ Χειμερινό Εξάμηνο 2024-2025 \\ Ε.ΔE.ΜΜ}
+\title{Αναγνώριση Προτύπων \\ 2η Εργαστηριακή Άσκηση \\ Χειμερινό Εξάμηνο 2024-2025 \\ Ε.ΔE.ΜΜ}
 \author{Σπανάκης Παναγιώτης-Αλέξιος (ΑΜ: 03400274)}
 \date{08/11/2024}
 
@@ -292,6 +292,303 @@
    \item Monitoring του validation score ανά κλάση
    \item Cross-validation για αξιολόγηση της robustness του μοντέλου
 \end{itemize}
+
+\section*{Βήμα 5: Αναγνώριση μουσικού είδους με LSTM}
+
+\subsection*{Αρχιτεκτονική Εκπαίδευσης}
+
+Η διαδικασία εκπαίδευσης υλοποιείται μέσω δύο βασικών κλάσεων:
+
+\begin{itemize}
+    \item Την κλάση \texttt{Training}, η οποία διαχειρίζεται τη συνολική διαδικασία εκπαίδευσης
+    \item Τη συνάρτηση \texttt{train()}, η οποία υλοποιεί τον βασικό βρόχο εκπαίδευσης
+\end{itemize}
+
+Η κλάση \texttt{Training} λειτουργεί ως περιτύλιγμα (wrapper) που ενσωματώνει όλες τις απαραίτητες παραμέτρους:
+
+\begin{verbatim}
+class Training(object):
+    def __init__(self, model, train_loader, val_loader, optimizer, 
+                 epochs, save_path, device, overfit_batch):
+        self.model = model
+        self.train_loader = train_loader
+        self.val_loader = val_loader
+        self.optimizer = optimizer
+        self.epochs = epochs
+        self.save = save_path
+        self.device = device
+        self.overfit_batch = overfit_batch
+\end{verbatim}
+
+\subsection*{Μηχανισμός Υπερεκπαίδευσης (Overfit Batch)}
+
+Ο μηχανισμός υπερεκπαίδευσης υλοποιείται στη συνάρτηση \texttt{overfit\_with\_a\_couple\_of\_batches()}. Η λογική του είναι η εξής:
+
+\begin{enumerate}
+    \item Επιλογή τριών πρώτων batches από τον data loader:
+    \begin{verbatim}
+    train_iter = iter(train_loader)
+    batches = []
+    for _ in range(3):
+        try:
+            batch = next(train_iter)
+            batches.append((
+                batch[0].float().to(device),  # δεδομένα
+                batch[1].to(device),          # ετικέτες
+                batch[2].to(device)           # μήκη ακολουθιών
+            ))
+        except StopIteration:
+            break
+    \end{verbatim}
+
+    \item Εκτέλεση πολλαπλών εποχών στα ίδια batches:
+    \begin{verbatim}
+    for epoch in range(epochs):
+        total_loss = 0
+        for batch_idx, (x, y, lengths) in enumerate(batches):
+            loss, logits = model(x, y, lengths) 
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+    \end{verbatim}
+\end{enumerate}
+
+Αυτή η προσέγγιση έχει τα εξής πλεονεκτήματα:
+
+\begin{enumerate}
+    \item \textbf{Γρήγορη Επαλήθευση}: Επιτρέπει τη γρήγορη επαλήθευση ότι το δίκτυο μπορεί να μάθει
+    \item \textbf{Εντοπισμός Προβλημάτων}: Βοηθά στον εντοπισμό προβλημάτων στη ροή των gradients
+    \item \textbf{Επιβεβαίωση Χωρητικότητας}: Επιβεβαιώνει ότι το μοντέλο έχει επαρκή χωρητικότητα
+\end{enumerate}
+
+\subsection*{Παρακολούθηση της Εκπαίδευσης}
+
+Η πρόοδος της εκπαίδευσης παρακολουθείται μέσω:
+
+\begin{verbatim}
+history = {'train_loss': [], 'val_loss': [], 'learning_rates': []}
+\end{verbatim}
+
+Επιπλέον, υλοποιήθηκε μηχανισμός early stopping:
+
+\begin{verbatim}
+early_stopper = EarlyStopper(model, save_path, patience=5)
+if early_stopper.early_stop(validation_loss):
+    print('Early Stopping was activated.')
+    break
+\end{verbatim}
+
+\subsection*{Οπτικοποίηση Αποτελεσμάτων}
+
+Η πρόοδος της εκπαίδευσης οπτικοποιείται μέσω γραφημάτων:
+
+\begin{verbatim}
+def plot_training_history(history, title):
+    plt.figure(figsize=(12, 8))
+    plt.plot(history['train_loss'], label='Training Loss')
+    plt.plot(history['val_loss'], label='Validation Loss')
+    plt.savefig(f'images/loss_plot_{title}.png')
+\end{verbatim}
+
+\subsection*{Σημαντικές Παρατηρήσεις Υλοποίησης}
+
+\begin{enumerate}
+    \item Η υλοποίηση χρησιμοποιεί τον optimizer AdamW με παραμέτρους:
+    \begin{verbatim}
+    optimizer = torch.optim.AdamW(
+        model.parameters(), 
+        lr=1e-4, 
+        weight_decay=1e-4
+    )
+    \end{verbatim}
+
+    \item Η εκπαίδευση εκτελείται αυτόματα στη GPU όταν είναι διαθέσιμη:
+    \begin{verbatim}
+    device = torch.device('cuda' if torch.cuda.is_available() 
+                         else 'cpu')
+    \end{verbatim}
+
+    \item Τα αποτελέσματα της εκπαίδευσης αποθηκεύονται σε checkpoints:
+    \begin{verbatim}
+    torch.save(self.model.state_dict(), self.save_path)
+    \end{verbatim}
+\end{enumerate}
+
+Η υλοποίηση αυτή παρέχει ένα ολοκληρωμένο πλαίσιο εκπαίδευσης με δυνατότητες debugging και παρακολούθησης της προόδου του μοντέλου,
+όπου έγινε εκπαίδευση των LSTM μοντέλων που εκπαιδεύτηκαν χρησιμοποιώντας τα datasets Mel, Beat, Chroma και το πλήρως συγχωνευμένο (Full Fused), σύμφωνα με τον κώδικα που υλοποιήθηκε στο \verb|train.py|.
+
+\section*{Βήμα 6: Αξιολόγηση των μοντέλων}
+
+Span
+
+\section*{Βήμα 7.1: Εκπαίδευση CNN}
+
+\subsection*{α)}
+
+Benzinas
+
+\subsection*{β)}
+
+Υλοποιήσαμε ένα CNN τεσσάρων επιπέδων για την επεξεργασία των φασματογραφημάτων ως μονοκάναλες εικόνες. Η κλάση \texttt{CNNBackbone} υλοποιεί τη βασική αρχιτεκτονική, όπου κάθε επίπεδο περιλαμβάνει διαδοχικά: 2D συνέλιξη, κανονικοποίηση παρτίδας (batch normalization), συνάρτηση ενεργοποίησης ReLU και συγκέντρωση μεγίστου (max pooling).
+
+Τα πρώτα δύο επίπεδα χρησιμοποιούν πυρήνες 5x5 ενώ τα επόμενα δύο 3x3. Όλα τα επίπεδα max pooling έχουν παράθυρο 2x2 και stride 2, μειώνοντας σταδιακά τις διαστάσεις της εικόνας. Ένα τελικό πλήρως συνδεδεμένο επίπεδο προσαρμόζει την έξοδο στο επιθυμητό μέγεθος χαρακτηριστικών.
+
+Η εκπαίδευση πραγματοποιήθηκε με optimizer AdamW και early stopping για αποφυγή υπερπροσαρμογής, χρησιμοποιώντας τέσσερα επίπεδα με 32, 64, 128 και 256 φίλτρα αντίστοιχα.
+
+\subsection*{γ)}
+
+\subsection*{Συνελικτικά Επίπεδα (Convolutional Layers)}
+Τα συνελικτικά επίπεδα αποτελούν θεμελιώδες στοιχείο των CNN και λειτουργούν ως εξής:
+
+\begin{itemize}
+   \item \textbf{Φίλτρα (Kernels):} Αποτελούν εκπαιδεύσιμους πίνακες βαρών που ολισθαίνουν πάνω από την είσοδο με συγκεκριμένο βήμα (stride). Σε κάθε θέση υπολογίζεται το εσωτερικό γινόμενο μεταξύ του φίλτρου και της αντίστοιχης περιοχής της εισόδου.
+
+   \item \textbf{Χάρτες Χαρακτηριστικών (Feature Maps):} Το αποτέλεσμα της συνέλιξης είναι ένας χάρτης που αποτυπώνει την παρουσία συγκεκριμένων μοτίβων στην είσοδο.
+\end{itemize}
+
+Η αποτελεσματικότητα των συνελικτικών επιπέδων οφείλεται στα εξής:
+\begin{itemize}
+   \item Αξιοποιούν τη χωρική δομή των δεδομένων, εντοπίζοντας μοτίβα ανεξαρτήτως θέσης
+   \item Μειώνουν τον αριθμό παραμέτρων μέσω της χρήσης κοινών βαρών
+   \item Δημιουργούν ιεραρχική αναπαράσταση χαρακτηριστικών, από απλά (π.χ. ακμές) έως σύνθετα μοτίβα
+\end{itemize}
+
+\subsection*{Συγκέντρωση Μεγίστου (Max Pooling)}
+Η λειτουργία Max Pooling στοχεύει στη μείωση της χωρικής διάστασης των χαρτών χαρακτηριστικών, διατηρώντας την ουσιώδη πληροφορία. Εφαρμόζει ένα κινούμενο παράθυρο συγκεκριμένων διαστάσεων, επιλέγοντας τη μέγιστη τιμή από κάθε περιοχή. Τα οφέλη περιλαμβάνουν:
+\begin{itemize}
+   \item Μείωση της υπολογιστικής πολυπλοκότητας
+   \item Αποφυγή υπερπροσαρμογής (overfitting)
+   \item Διατήρηση της σημαντικής πληροφορίας
+\end{itemize}
+
+\subsection*{Συνάρτηση Ενεργοποίησης ReLU}
+Η ReLU (Rectified Linear Unit) ορίζεται ως:
+\[ \text{ReLU}(x) = \max(0,x) \]
+
+Προσφέρει τα εξής πλεονεκτήματα:
+\begin{itemize}
+   \item \textbf{Μη-Γραμμικότητα:} Επιτρέπει τη μοντελοποίηση πολύπλοκων συσχετίσεων
+   \item \textbf{Υπολογιστική Αποδοτικότητα:} Απλή και γρήγορη στην εκτέλεση
+   \item \textbf{Αντιμετώπιση Vanishing Gradient:} Σταθερή παράγωγος για θετικές τιμές
+\end{itemize}
+
+\subsection*{Κανονικοποίηση Παρτίδας (Batch Normalization)}
+Η τεχνική αυτή εξασφαλίζει σταθερή κατανομή των εισόδων σε κάθε επίπεδο:
+
+\begin{itemize}
+   \item \textbf{Υπολογισμός Στατιστικών:}
+   \[ \mu \text{ (μέσος όρος) και } \sigma^2 \text{ (διακύμανση)} \]
+   
+   \item \textbf{Κανονικοποίηση:}
+   \[ \text{Normalized} = \frac{x - \mu}{\sigma} \]
+   
+   \item \textbf{Γραμμικός Μετασχηματισμός:}
+   \[ \text{Output} = \gamma \cdot \text{Normalized} + \beta \]
+\end{itemize}
+
+Τα πλεονεκτήματα περιλαμβάνουν:
+\begin{itemize}
+   \item Ταχύτερη εκπαίδευση
+   \item Βελτιωμένη σύγκλιση
+   \item Μείωση του internal covariate shift
+   \item Κανονικοποιητική επίδραση
+\end{itemize}
+
+
+\subsection*{δ)}
+
+Span
+
+\subsection*{ε)}
+
+Span
+
+\section*{Βήμα 7.2: Εκπαίδευση AST}
+
+
+\subsection*{α)}
+
+Benzinas
+
+
+\subsection*{β)}
+
+Span
+
+\section*{Βήμα 8: Εκτίμηση συναισθήματος - συμπεριφοράς με παλινδρόμηση}
+
+Span
+
+\section*{Βήμα 9: Μεταφορά γνώσης (Transfer Learning)}
+
+\subsection*{α)}
+
+Σύμφωνα με το paper "How transferable are features in deep neural networks?", 
+η δυνατότητα μεταφοράς χαρακτηριστικών μεταξύ διαφορετικών εργασιών περιορίζεται από 
+την εξειδίκευση των νευρώνων στα ανώτερα επίπεδα στην αρχική εργασία, καθώς και από τη 
+δυσκολία διατήρησης της συν-προσαρμογής (co-adaptation) μεταξύ των νευρώνων όταν γίνεται 
+ο διαχωρισμός του δικτύου. Η επίδραση αυτών των περιορισμών διαφέρει ανάλογα με το βάθος 
+των επιπέδων από τα οποία γίνεται η μεταφορά χαρακτηριστικών, με τα χαμηλότερα επίπεδα 
+να είναι γενικά πιο κατάλληλα για μεταφορά γνώσης.
+
+\subsection*{β)}
+
+Span
+
+\subsection*{γ)}
+
+Span + Benzinas
+
+\subsection*{δ)}
+
+Span
+
+\subsection*{ε)}
+
+Span
+
+\section*{Βήμα 10: Εκπαίδευση σε πολλαπλά προβλήματα (Multitask Learning)}
+
+\subsection*{α)}
+
+Η βασική συνεισφορά του ``One Model To Learn Them All'' είναι η παρουσίαση ενός ενιαίου μοντέλου βαθιάς μάθησης 
+(MultiModel) που μπορεί να εκπαιδευτεί ταυτόχρονα σε οκτώ διαφορετικά προβλήματα από διαφορετικούς τομείς 
+(όπως αναγνώριση εικόνας, μετάφραση, αναγνώριση ομιλίας κ.ά.) χρησιμοποιώντας μικρά υπο-δίκτυα ειδικά για κάθε τροπικότητα εισόδου-εξόδου 
+(modality-specific sub-networks). Τα πειραματικά αποτελέσματα δείχνουν ότι η από κοινού εκπαίδευση σε πολλαπλές εργασίες 
+όχι μόνο δεν μειώνει την απόδοση στις μεμονωμένες εργασίες με μεγάλα σύνολα δεδομένων, αλλά βελτιώνει σημαντικά την 
+απόδοση στις εργασίες με περιορισμένα δεδομένα εκπαίδευσης, αποδεικνύοντας τη δυνατότητα μεταφοράς γνώσης μεταξύ των διαφορετικών προβλημάτων.
+
+\subsection*{β)}
+
+Υλοποιήσαμε μια συνάρτηση κόστους για παράλληλη εκπαίδευση τριών διαφορετικών εργασιών (valence, arousal, danceability) μέσω της κλάσης \texttt{MultitaskRegressor}. Η συνάρτηση \texttt{compute\_multitask\_loss} υπολογίζει το συνολικό κόστος ως εξής:
+
+\begin{equation}
+L_{total} = w_v \cdot L_{valence} + w_a \cdot L_{arousal} + w_d \cdot L_{danceability}
+\end{equation}
+
+όπου:
+\[ L_i = \text{MSE}(y_{\text{pred},i}, y_{\text{true},i}) \]
+\[ \text{MSE}(y_{\text{pred}}, y_{\text{true}}) = \frac{1}{n}\sum_{j=1}^n (y_{\text{pred},j} - y_{\text{true},j})^2 \]
+
+Τα βάρη \(w_v\), \(w_a\), \(w_d\) ορίζονται στο λεξικό \texttt{task\_weights} και μπορούν να προσαρμοστούν ώστε να εξισορροπήσουν τις διαφορετικές κλίμακες των επιμέρους κοστών:
+
+\begin{verbatim}
+self.task_weights = {
+   'valence': 1.0,
+   'arousal': 1.0,
+   'danceability': 1.0
+}
+\end{verbatim}
+
+Η συνάρτηση επιστρέφει τόσο το συνολικό κόστος όσο και τα επιμέρους κόστη για την παρακολούθηση της εκπαίδευσης κάθε εργασίας ξεχωριστά.
+
+\subsection*{γ)}
+
+Span
+
+\subsection*{δ)}
+
+Span
 
 \bibliographystyle{plainnat}
 \bibliography{references}

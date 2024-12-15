@@ -319,9 +319,9 @@ def train(train_loader, val_loader, num_epochs, device, overfit_batch=False, wei
         num_classes = len(np.unique(train_loader.dataset.labels))
         # Get unique class names
         unique_labels = np.unique(train_loader.dataset.labels)
-        print(f"Unique labels: {unique_labels}")
+        #print(f"Unique labels: {unique_labels}")
         class_names = [train_loader.dataset.label_transformer.inverse(label) for label in range(num_classes)]
-        print(f"Class names: {class_names}")
+        #print(f"Class names: {class_names}")
     else:
         input_dim = train_loader.dataset[0][0].shape[1]
         num_classes = 10
@@ -341,16 +341,16 @@ def train(train_loader, val_loader, num_epochs, device, overfit_batch=False, wei
     for epoch in range(num_epochs):
         training_loss, preds_all, labels_all = train_epoch(model, train_loader, optimizer, criterion, device)
         valid_loss, y_pred, y_true = eval_epoch(model, val_loader, criterion, device)
-        print(
-            f"Epoch {epoch + 1}: train loss = {training_loss:.4f}, valid loss = {valid_loss:.4f}"
-        )
+        #print(
+        #    f"Epoch {epoch + 1}: train loss = {training_loss:.4f}, valid loss = {valid_loss:.4f}"
+        #)
         history['train_loss'].append(training_loss)
         history['val_loss'].append(valid_loss)
         history['learning_rates'].append(optimizer.param_groups[0]['lr'])
         
         # Check if current model is the best
         if early_stopping.is_best(valid_loss) and not overfit_batch:
-            print("New best model found! Saving checkpoint.")
+            #print("New best model found! Saving checkpoint.")
             torch.save({
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
@@ -360,11 +360,11 @@ def train(train_loader, val_loader, num_epochs, device, overfit_batch=False, wei
             
         # If overfitting a batch, we care more about train loss going to zero
         if overfit_batch and training_loss < 1e-3:
-            print("Successfully overfitted batch!")
+            #print("Successfully overfitted batch!")
             break
         
         if early_stopping.stop(valid_loss) and not overfit_batch:
-            print("Early stopping...")
+            #print("Early stopping...")
             break
     
     if not overfit_batch:
@@ -438,17 +438,20 @@ def train_genre_classifier(dataset_path, feat_type='mel', batch_size=32, num_epo
     
     if is_beat_sync:
         feat_type = 'beat'
+        
+    max_length = 150
     
     # Create datasets
     train_dataset = SpectrogramDataset(
         dataset_path, 
         class_mapping=CLASS_MAPPING,
         train=True,
-        feat_type=feat_type
+        feat_type=feat_type,
+        max_length=max_length
     )
     
     # Create data loaders
-    train_loader, val_loader = torch_train_val_split(
+    train_loader, val_loader, _ = torch_train_val_split(
         train_dataset,
         batch_train=batch_size,
         batch_eval=batch_size
@@ -568,14 +571,14 @@ def evaluate_models_on_test(base_path, model_dict, device, batch_size):
     )
     
     # Create test loaders
-    regular_loader, _ = torch_train_val_split(
+    regular_loader, _, _ = torch_train_val_split(
         regular_test,
         batch_train=batch_size,
         batch_eval=batch_size,
         val_size=0.0
     )
     
-    beat_loader, _ = torch_train_val_split(
+    beat_loader, _, _ = torch_train_val_split(
         beat_test,
         batch_train=batch_size,
         batch_eval=batch_size,

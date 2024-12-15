@@ -2,14 +2,15 @@ import torch.nn as nn
 
 from convolution import CNNBackbone
 from lstm import LSTMBackbone
-
+from typing import Dict, Optional, Tuple, Union
 
 import torch
 import os
 
 def load_backbone_from_checkpoint(model, checkpoint_path):
     """
-    Load weights from a checkpoint file into the backbone model.
+    A simplified function to load weights from a checkpoint into a backbone model.
+    Handles both complete model checkpoints and backbone-only checkpoints.
     
     Args:
         model (nn.Module): The backbone model to load weights into
@@ -17,63 +18,39 @@ def load_backbone_from_checkpoint(model, checkpoint_path):
         
     Returns:
         nn.Module: The model with loaded weights
-        
-    Raises:
-        FileNotFoundError: If checkpoint_path doesn't exist
-        RuntimeError: If checkpoint is incompatible with model architecture
     """
+    # Ensure checkpoint exists
     if not os.path.exists(checkpoint_path):
-        raise FileNotFoundError(f"Checkpoint not found at {checkpoint_path}")
-        
-    # Load checkpoint
-    checkpoint = torch.load(checkpoint_path, map_location='cpu')
+        raise FileNotFoundError(f"No checkpoint found at {checkpoint_path}")
     
-    # Extract state dict, handling different checkpoint formats
+    # Load checkpoint
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+    
+    # Handle different checkpoint formats
     if isinstance(checkpoint, dict):
-        if 'state_dict' in checkpoint:
-            state_dict = checkpoint['state_dict']
-        elif 'model_state_dict' in checkpoint:
+        # If checkpoint contains full model state
+        if 'model_state_dict' in checkpoint:
             state_dict = checkpoint['model_state_dict']
-        elif 'backbone' in checkpoint:
-            state_dict = checkpoint['backbone']
         else:
             state_dict = checkpoint
-    else:
-        raise ValueError("Checkpoint format not recognized")
-    
-    # Filter only backbone parameters
-    backbone_state_dict = {}
-    for k, v in state_dict.items():
-        # Handle different key formats
-        if k.startswith('backbone.'):
+            
+        # Extract backbone weights if they exist
+        backbone_state_dict = {}
+        for key, value in state_dict.items():
             # Remove 'backbone.' prefix if it exists
-            backbone_state_dict[k.replace('backbone.', '')] = v
-        elif k.startswith('module.backbone.'):
-            # Handle DataParallel format
-            backbone_state_dict[k.replace('module.backbone.', '')] = v
-        elif k.startswith('module.'):
-            # Handle DataParallel format without backbone prefix
-            backbone_state_dict[k.replace('module.', '')] = v
-        else:
-            backbone_state_dict[k] = v
-            
-    # Try to load the filtered state dict
-    try:
-        model.load_state_dict(backbone_state_dict, strict=True)
-    except RuntimeError as e:
-        # If strict loading fails, try non-strict loading
-        missing_keys, unexpected_keys = model.load_state_dict(backbone_state_dict, strict=False)
-        print(f"Warning: Non-strict loading performed.")
-        if missing_keys:
-            print(f"Missing keys: {missing_keys}")
-        if unexpected_keys:
-            print(f"Unexpected keys: {unexpected_keys}")
-            
-    # Set model to evaluation mode
+            if key.startswith('backbone.'):
+                backbone_state_dict[key.replace('backbone.', '')] = value
+            else:
+                backbone_state_dict[key] = value
+    else:
+        backbone_state_dict = checkpoint
+    
+    # Load the weights
+    model.load_state_dict(backbone_state_dict, strict=False)
     model.eval()
     
     return model
-
 class Classifier(nn.Module):
     def __init__(self, num_classes, backbone, load_from_checkpoint=None):
         """
@@ -92,11 +69,36 @@ class Classifier(nn.Module):
         self.output_layer = nn.Linear(self.backbone.feature_size, num_classes)
         self.criterion = nn.CrossEntropyLoss()  # Loss function for classification
 
-    def forward(self, x, targets, lengths):
-        feats = self.backbone(x) if not self.is_lstm else self.backbone(x, lengths)
+    def forward(self, x: torch.Tensor, 
+                targets: Optional[torch.Tensor] = None,
+                lengths: Optional[torch.Tensor] = None) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        """
+        Forward pass supporting both training and inference modes.
+        
+        Args:
+            x: Input tensor
+            targets: Optional target labels (for training)
+            lengths: Optional sequence lengths (for LSTM)
+            
+        Returns:
+            During training: (loss, logits)
+            During inference: logits only
+        """
+        # Get features from backbone, handling LSTM vs non-LSTM case
+        if self.is_lstm and lengths is not None:
+            feats = self.backbone(x, lengths)
+        else:
+            feats = self.backbone(x)
+            
         logits = self.output_layer(feats)
-        loss = self.criterion(logits, targets)
-        return loss, logits
+        
+        if targets is not None:
+            loss = self.criterion(logits, targets)
+            return loss, logits
+        return logits
+    
+    def get_backbone_name(self):
+        return self.backbone.get_backbone_name()
     
 
 class Regressor(nn.Module):
@@ -115,21 +117,38 @@ class Regressor(nn.Module):
         self.output_layer = nn.Linear(self.backbone.feature_size, 1)
         self.criterion = nn.MSELoss()  # Loss function for regression
 
-    def forward(self, x, targets, lengths):
-        feats = self.backbone(x) if not self.is_lstm else self.backbone(x, lengths)
-        out = self.output_layer(feats)
-        loss = self.criterion(out.float(), targets.float())
-        return loss, out
+    def forward(self, x: torch.Tensor,
+                targets: Optional[torch.Tensor] = None,
+                lengths: Optional[torch.Tensor] = None) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        """
+        Forward pass supporting both training and inference modes.
+        """
+        # Get features from backbone, handling LSTM vs non-LSTM case
+        if self.is_lstm and lengths is not None:
+            feats = self.backbone(x, lengths)
+        else:
+            feats = self.backbone(x)
+            
+        predictions = self.output_layer(feats)
+        predictions = predictions.squeeze(-1)  # Remove the last dimension to match target shape
+        
+        if targets is not None:
+            loss = self.criterion(predictions.float(), targets.float())
+            return loss, predictions
+        return predictions
+    
+    def get_backbone_name(self):
+        return self.backbone.get_backbone_name()
 
 
 class MultitaskRegressor(nn.Module):
     def __init__(self, backbone, load_from_checkpoint=None):
         """
-        An extended version of the Regressor that handles multiple regression tasks simultaneously
+        A regressor that handles multiple regression tasks simultaneously while maintaining
+        compatibility with the existing training infrastructure.
         
-        Args:
-            backbone (nn.Module): The nn.Module to use for spectrogram parsing
-            load_from_checkpoint (Optional[str]): Use a pretrained checkpoint to initialize the model
+        The model predicts valence, arousal, and danceability using a shared backbone
+        and separate prediction heads for each task.
         """
         super(MultitaskRegressor, self).__init__()
         self.backbone = backbone
@@ -146,82 +165,61 @@ class MultitaskRegressor(nn.Module):
         
         self.criterion = nn.MSELoss()
         
-        # Task weights to balance the losses
-        # These can be adjusted based on the scale of each task's values
+        # Weights for each task to balance the loss
         self.task_weights = {
-            'valence': 1.0,
-            'arousal': 1.0,
-            'danceability': 1.0
+            'valence': 1,
+            'arousal': 1,
+            'danceability': 1              
         }
     
-    def compute_multitask_loss(self, valence_out, arousal_out, danceability_out, 
-                             valence_targets, arousal_targets, danceability_targets):
+    def forward(self, x: torch.Tensor,
+                targets: Optional[torch.Tensor] = None,
+                lengths: Optional[torch.Tensor] = None) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """
-        Compute the weighted sum of losses for all three tasks
+        Forward pass compatible with train_with_eval function.
         
         Args:
-            *_out: Model predictions for each task
-            *_targets: Ground truth values for each task
+            x: Input spectrograms of shape (batch_size, time_steps, features)
+            targets: Target values of shape (batch_size, 3) where each column represents
+                    valence, arousal, and danceability respectively
+            lengths: Optional sequence lengths for LSTM processing
             
         Returns:
-            total_loss: Weighted sum of individual task losses
-            individual_losses: Dictionary containing individual losses for monitoring
+            During training (targets provided):
+                - tuple (loss, predictions)
+            During inference (no targets):
+                - predictions only
         """
-        valence_loss = self.criterion(valence_out.float(), valence_targets.float())
-        arousal_loss = self.criterion(arousal_out.float(), arousal_targets.float())
-        danceability_loss = self.criterion(danceability_out.float(), danceability_targets.float())
-        
-        # Apply task weights
-        weighted_valence_loss = self.task_weights['valence'] * valence_loss
-        weighted_arousal_loss = self.task_weights['arousal'] * arousal_loss
-        weighted_danceability_loss = self.task_weights['danceability'] * danceability_loss
-        
-        # Compute total loss
-        total_loss = weighted_valence_loss + weighted_arousal_loss + weighted_danceability_loss
-        
-        # Return both total loss and individual losses for monitoring
-        individual_losses = {
-            'valence': valence_loss.item(),
-            'arousal': arousal_loss.item(),
-            'danceability': danceability_loss.item(),
-            'total': total_loss.item()
-        }
-        
-        return total_loss, individual_losses
-    
-    def forward(self, x, targets, lengths):
-        """
-        Forward pass handling multiple targets
-        
-        Args:
-            x: Input features
-            targets: Dictionary containing targets for each task
-            lengths: Sequence lengths for LSTM
-            
-        Returns:
-            total_loss: Combined loss from all tasks
-            outputs: Dictionary containing predictions for each task
-            individual_losses: Dictionary containing individual task losses
-        """
-        # Get backbone features
-        feats = self.backbone(x) if not self.is_lstm else self.backbone(x, lengths)
+        # Get features from backbone
+        if self.is_lstm and lengths is not None:
+            features = self.backbone(x, lengths)
+        else:
+            features = self.backbone(x)
         
         # Get predictions for each task
-        valence_out = self.valence_layer(feats)
-        arousal_out = self.arousal_layer(feats)
-        danceability_out = self.danceability_layer(feats)
+        valence_pred = self.valence_layer(features).squeeze(-1)
+        arousal_pred = self.arousal_layer(features).squeeze(-1)
+        danceability_pred = self.danceability_layer(features).squeeze(-1)
         
-        # Compute combined loss
-        total_loss, individual_losses = self.compute_multitask_loss(
-            valence_out, arousal_out, danceability_out,
-            targets['valence'], targets['arousal'], targets['danceability']
-        )
+        # Stack predictions to match target format
+        predictions = torch.stack([valence_pred, arousal_pred, danceability_pred], dim=1)
         
-        # Package outputs
-        outputs = {
-            'valence': valence_out,
-            'arousal': arousal_out,
-            'danceability': danceability_out
-        }
+        if targets is not None:
+            # Calculate individual losses
+            valence_loss = self.criterion(valence_pred, targets[:, 0])
+            arousal_loss = self.criterion(arousal_pred, targets[:, 1])
+            danceability_loss = self.criterion(danceability_pred, targets[:, 2])
+            
+            # Apply task weights
+            total_loss = (
+                self.task_weights['valence'] * valence_loss +
+                self.task_weights['arousal'] * arousal_loss +
+                self.task_weights['danceability'] * danceability_loss
+            )
+            
+            return total_loss, predictions
         
-        return total_loss, outputs, individual_losses
+        return predictions
+    
+    def get_backbone_name(self):
+        return f"Multitask-{self.backbone.get_backbone_name()}"

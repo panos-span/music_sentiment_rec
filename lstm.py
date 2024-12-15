@@ -206,6 +206,9 @@ class LSTMBackbone(nn.Module):
         last_out = out.gather(gather_dim, gather_idx).squeeze(gather_dim)
 
         return last_out
+    
+    def get_backbone_name(self):
+        return "LSTM"
 
 
 class GenreClassifier(nn.Module):

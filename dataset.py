@@ -136,67 +136,139 @@ class PaddingTransform(object):
 
 class SpectrogramDataset(Dataset):
     def __init__(
-        self, path, class_mapping=None, train=True, feat_type='mel', max_length=-1, regression=None, multitask=False
+        self, path, class_mapping=None, train=True, feat_type='mel', 
+        max_length=-1, regression=None, multitask=False
     ):
+        """
+        Initialize dataset for either classification or regression tasks.
+        
+        Args:
+            path: Path to the dataset directory
+            class_mapping: Dictionary mapping raw class names to processed class names
+            train: Boolean indicating if this is training data
+            feat_type: Type of features to use ('mel', 'chroma', or 'fused')
+            max_length: Maximum length of spectrograms (-1 for no limit)
+            regression: Which column to use for regression (None for classification)
+            multitask: Whether to return all regression targets
+        """
         t = "train" if train else "test"
         p = os.path.join(path, t)
         self.regression = regression
         self.multitask = multitask
+        self.feat_type = feat_type
 
         self.full_path = p
         self.index = os.path.join(path, "{}_labels.txt".format(t))
+        
+        print(f"Loading dataset from {self.full_path}")
+        print(f"Using labels file: {self.index}")
+        print(f"{'Multitask' if multitask else 'Single-task'} regression mode: {regression}")
+        
         self.files, labels = self.get_files_labels(self.index, class_mapping)
         self.feats = [read_spectrogram(os.path.join(p, f), feat_type) for f in self.files]
         self.feat_dim = self.feats[0].shape[1]
-        print(f"Loaded {len(self.feats)} samples with shape {self.feats[0].shape}")
-        print(f"Class distribution: {np.unique(labels, return_counts=True)}")
-        print(f"{self.feat_dim}")
         self.lengths = [len(i) for i in self.feats]
         self.max_length = max(self.lengths) if max_length <= 0 else max_length
         self.zero_pad_and_stack = PaddingTransform(self.max_length)
-        self.label_transformer = LabelTransformer()
+        
+        # Handle labels based on task type
         if isinstance(labels, (list, tuple)):
-            if not regression:
+            if not regression and not multitask:
+                # Classification case
+                self.label_transformer = LabelTransformer()
                 self.labels = np.array(
                     self.label_transformer.fit_transform(labels)
                 ).astype("int64")
             else:
-                self.labels = np.array(labels).astype("float64")
+                # Regression case (single or multitask)
+                self.labels = np.array(labels).astype("float32")
+                if self.multitask:
+                    print(f"Multitask labels shape: {self.labels.shape}")
+                else:
+                    print(f"Single task labels shape: {self.labels.shape}")
 
     def get_files_labels(self, txt, class_mapping):
+        """
+        Read and process files and their corresponding labels.
+        For regression tasks, expects a CSV format with columns: 
+        filename, valence, energy, danceability
+        """
+        if not os.path.exists(txt):
+            raise FileNotFoundError(f"Labels file not found: {txt}")
+        
         with open(txt, "r") as fd:
             lines = [l.rstrip().split("\t") for l in fd.readlines()[1:]]
+        
+        print(f"Read {len(lines)} lines from labels file")
+        
         files, labels = [], []
-        for l in lines:
-            if self.regression:
-                l = l[0].split(",")
-                files.append(l[0] + ".fused.full.npy")
-                labels.append(l[self.regression]) if not self.multitask else labels.append(l[1:])
+        for line_num, l in enumerate(lines, 1):
+            try:
+                if self.regression is not None or self.multitask:
+                    # Handle regression case (single or multitask)
+                    values = l[0].split(",")
+                    if len(values) < 4:
+                        print(f"Warning: Line {line_num} has insufficient values: {l}")
+                        continue
+                    
+                    # Process filename
+                    filename = values[0]
+                    if not filename.endswith('.npy'):
+                        filename += ".fused.full.npy"
+                    
+                    # Get regression targets
+                    if self.multitask:
+                        # For multitask, return all regression targets
+                        regression_values = [float(x) for x in values[1:4]]
+                        labels.append(regression_values)
+                    else:
+                        # For single task, return only the specified target
+                        labels.append(float(values[self.regression]))
+                    
+                    files.append(filename)
+                else:
+                    # Handle classification case
+                    if len(l) < 2:
+                        print(f"Warning: Line {line_num} has wrong format: {l}")
+                        continue
+                    
+                    label = l[1]
+                    if class_mapping:
+                        label = class_mapping[l[1]]
+                    if not label:
+                        continue
+                    
+                    fname = l[0]
+                    if fname.endswith(".gz"):
+                        fname = ".".join(fname.split(".")[:-1])
+                    
+                    # Handle special cases
+                    if 'fma_genre_spectrograms_beat' in self.full_path:
+                        fname = fname.replace('beatsync.fused', 'fused.full')            
+                    if 'test' in self.full_path:
+                        fname = fname.replace('full.fused', 'fused.full')
+                    
+                    files.append(fname)
+                    labels.append(label)
+                
+            except Exception as e:
+                print(f"Error processing line {line_num}: {str(e)}")
                 continue
-            label = l[1]
-            if class_mapping:
-                label = class_mapping[l[1]]
-            if not label:
-                continue
-            fname = l[0]
-            if fname.endswith(".gz"):
-                fname = ".".join(fname.split(".")[:-1])
-            
-            # necessary fixes for the custom dataset used in the lab
-            if 'fma_genre_spectrograms_beat' in self.full_path.split('/'):
-                fname = fname.replace('beatsync.fused', 'fused.full')            
-            if 'test' in self.full_path.split('/'):
-                fname = fname.replace('full.fused', 'fused.full')
-            
-            files.append(fname)
-            labels.append(label)
+        
+        print(f"Successfully processed {len(files)} valid entries")
+        
+        if len(files) == 0:
+            raise ValueError("No valid files found in the labels file")
+        
         return files, labels
 
     def __getitem__(self, item):
+        """Get a single item from the dataset."""
         length = min(self.lengths[item], self.max_length)
         return self.zero_pad_and_stack(self.feats[item]), self.labels[item], length
 
     def __len__(self):
+        """Get the total size of the dataset."""
         return len(self.labels)
 
 

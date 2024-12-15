@@ -45,3 +45,6 @@ class CNNBackbone(nn.Module):
         out = out.reshape(out.size(0), -1)
         out = self.fc1(out)
         return out
+    
+    def get_backbone_name(self):
+        return "CNN"

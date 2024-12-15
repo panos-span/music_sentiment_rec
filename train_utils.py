@@ -4,25 +4,82 @@ import matplotlib.pyplot as plt
 from sklearn.metrics import confusion_matrix, accuracy_score, classification_report
 from plot_confusion_matrix import plot_confusion_matrix
 from modules import Classifier
+import os
 
 class EarlyStopper:
+    """
+    Early stopping handler that saves model checkpoints and stops training when 
+    validation loss stops improving.
+    """
     def __init__(self, model, save_path, patience=1, min_delta=0):
+        """
+        Initialize the early stopper.
+        
+        Args:
+            model: The model being trained
+            save_path: Where to save the model checkpoint
+            patience: Number of epochs to wait before stopping
+            min_delta: Minimum change in loss to qualify as an improvement
+        """
         self.model = model
         self.save_path = save_path
         self.patience = patience
         self.min_delta = min_delta
         self.counter = 0
-        self.min_validation_loss = np.inf
-
-    def early_stop(self, validation_loss):
+        self.min_validation_loss = float('inf')
+        
+        # Create directory if it doesn't exist
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    
+    def save_checkpoint(self, model_state, validation_loss, epoch, optimizer_state=None):
+        """
+        Save a checkpoint of the model.
+        
+        Args:
+            model_state: Current state of the model
+            validation_loss: Current validation loss
+            epoch: Current epoch number
+            optimizer_state: Optional optimizer state
+        """
+        checkpoint = {
+            'model_state_dict': model_state,
+            'epoch': epoch,
+            'validation_loss': validation_loss
+        }
+        if optimizer_state is not None:
+            checkpoint['optimizer_state_dict'] = optimizer_state
+            
+        torch.save(checkpoint, self.save_path)
+    
+    def early_stop(self, validation_loss, epoch=None, optimizer_state=None):
+        """
+        Check if training should stop and save checkpoint if loss improved.
+        
+        Args:
+            validation_loss: Current validation loss
+            epoch: Current epoch number (optional)
+            optimizer_state: Current optimizer state (optional)
+            
+        Returns:
+            bool: True if training should stop, False otherwise
+        """
         if validation_loss < self.min_validation_loss:
+            # Save checkpoint since we found a better model
             self.min_validation_loss = validation_loss
             self.counter = 0
-            torch.save(self.model.state_dict(), self.save_path)
+            self.save_checkpoint(
+                self.model.state_dict(),
+                validation_loss,
+                epoch,
+                optimizer_state
+            )
+            return False
+        
         elif validation_loss > (self.min_validation_loss + self.min_delta):
             self.counter += 1
             if self.counter >= self.patience:
                 return True
+        
         return False
 
 
@@ -56,7 +113,7 @@ def validate_one_epoch(model, val_loader, device):
 
 
 
-def overfit_with_a_couple_of_batches(model, train_loader, optimizer, device, epochs: int):
+def overfit_with_a_couple_of_batches(model, train_loader, optimizer, device, epochs: int, title=None):
     """
     Train the model by overfitting on 3 batches to verify the network can learn.
     This helps ensure gradients flow properly through the network.
@@ -88,11 +145,10 @@ def overfit_with_a_couple_of_batches(model, train_loader, optimizer, device, epo
     if not batches:
         raise RuntimeError("No batches available for training")
     
-    model.train()
-    
     total_avg_per_epoch = 0
     history = {'train_loss': [], 'val_loss': []}
     for epoch in range(epochs):
+        model.train()  # Move inside epoch loop
         total_loss = 0
         
         # Train on each of the saved batches
@@ -125,7 +181,7 @@ def overfit_with_a_couple_of_batches(model, train_loader, optimizer, device, epo
     # Calculate average loss across all epochs
     total_avg_per_epoch /= epochs
     print(f'Average loss across all epochs: {total_avg_per_epoch:.6f}')
-    plot_training_history(history, title="Overfitting Training and Validation Loss")
+    plot_training_history(history, title=title)
     return model
     
 
@@ -142,96 +198,48 @@ def plot_training_history(history, title):
     plt.plot(history['val_loss'], label='Validation Loss', color='red')
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
-    plt.title('Training and Validation Loss')
+    plt.title(f'{title}')
     plt.legend()
     plt.grid(True)
-    plt.savefig('images/loss_plot_{}.png'.format(title))
+    plt.savefig('images/{}.png'.format(title))
 
 
-def train(model, train_loader, val_loader, optimizer, epochs, save_path, device, overfit_batch):
-    # Get unique class names
-    #num_classes = len(np.unique(train_loader.dataset.labels))
-    #unique_labels = np.unique(train_loader.dataset.labels)
-    #print(f"Unique labels: {unique_labels}")
-    #class_names = [train_loader.dataset.label_transformer.inverse(label) for label in range(num_classes)]
+def train(model, train_loader, val_loader, optimizer, epochs, save_path, device, overfit_batch, title):
+    """
+    Modified training function to work with the improved checkpoint system.
+    """
+    model.train()
     history = {'train_loss': [], 'val_loss': [], 'learning_rates': []}
-
+    
     if overfit_batch:
-       train_loss = overfit_with_a_couple_of_batches(model, train_loader, optimizer, device, epochs)
-    else:
-        print(f'Training started for model {save_path.replace(".pth", "")}...')
-        early_stopper = EarlyStopper(model, save_path, patience=5)
-        for epoch in range(epochs):
-            train_loss = train_one_epoch(model, train_loader, optimizer, device)
-            validation_loss = validate_one_epoch(model, val_loader, device)
-            history['train_loss'].append(train_loss)
-            history['val_loss'].append(validation_loss)
-            history['learning_rates'].append(optimizer.param_groups[0]['lr'])
-            
-            if epoch== 0 or (epoch+1) % 5==0:
-                print(f'Epoch {epoch+1}/{epochs}, Loss at training set: {train_loss}\n\tLoss at validation set: {validation_loss}')          
-            
-            if early_stopper.early_stop(validation_loss):
-                print('Early Stopping was activated.')
-                print(f'Epoch {epoch+1}/{epochs}, Loss at training set: {train_loss}\n\tLoss at validation set: {validation_loss}')
-                print('Training has been completed.\n')
-                break
-            
-    if not overfit_batch:
-        # Return the best model and history
-        best_model = Classifier(model.num_classes, model.backbone)
-        best_model.load_state_dict(torch.load(save_path),weights_only=True)
-        plot_training_history(history, title="Training and Validation Loss")    
-    else:
-        best_model = model    
-    return best_model
+        train_loss = overfit_with_a_couple_of_batches(model, train_loader, optimizer, device, epochs=epochs, title=title)
+        return model
+    
+    print(f'Training started for model {os.path.basename(save_path).replace(".pth", "")}...')
+    early_stopper = EarlyStopper(model, save_path, patience=5)
+    
+    for epoch in range(epochs):
+        train_loss = train_one_epoch(model, train_loader, optimizer, device)
+        validation_loss = validate_one_epoch(model, val_loader, device)
+        
+        # Update history
+        history['train_loss'].append(train_loss)
+        history['val_loss'].append(validation_loss)
+        history['learning_rates'].append(optimizer.param_groups[0]['lr'])
+        
+        if epoch == 0 or (epoch + 1) % 5 == 0:
+            print(f'Epoch {epoch+1}/{epochs}, Train loss: {train_loss:.4f}, Val loss: {validation_loss:.4f}')
+        
+        if early_stopper.early_stop(validation_loss, epoch, optimizer.state_dict()):
+            print(f'Early stopping triggered at epoch {epoch+1}')
+            break
+    
+    # Load the best model
+    checkpoint = torch.load(save_path, weights_only=True)
+    model.load_state_dict(checkpoint['model_state_dict'])
+    print(f'Loaded best model from epoch {checkpoint["epoch"] + 1} with validation loss: {checkpoint["validation_loss"]:.4f}')
     
     if not overfit_batch:
-        checkpoint = torch.load(save_path, weights_only=True)
-        model.load_state_dict(checkpoint)
-        valid_loss, y_true, y_pred = validate_one_epoch(model, val_loader, device)
-        # Move to cpu
-        y_true = y_true.cpu().numpy().ravel()
-        y_pred = y_pred.cpu().numpy().ravel()
-        
-        cm = confusion_matrix(y_true, y_pred, normalize='true')
-        plot_confusion_matrix(cm, classes=class_names, title='Confusion Matrix', normalize=True)
-        
-        # Print classification report with explicit handling
-        try:
-            # Convert integer labels to class names for better readability
-            y_pred_classes = [class_names[int(i)] for i in y_pred]
-            y_true_classes = [class_names[int(i)] for i in y_true]
-            
-            report = classification_report(
-                y_true_classes, 
-                y_pred_classes,
-                digits=3,
-                zero_division=0,
-            )
-            print("\nClassification Report:")
-            print(report)
-        except Exception as e:
-            print(f"Error generating classification report: {str(e)}")
-            # Fallback to basic metrics
-            print("\nPer-class accuracies:")
-            for i in range(model.num_classes):
-                class_mask = (y_true == i)
-                if np.any(class_mask):
-                    class_acc = np.mean(y_pred[class_mask] == i)
-                    print(f"{class_names[i]}: {class_acc:.3f}")
-        print(f"Accuracy on validation set: {accuracy_score(y_true, y_pred):.4f}")
-    else:
-        # Calculate accuracy
-        preds = torch.argmax(preds_all, dim=1)
-        correct = (preds == labels_all).sum().item()
-        total = len(labels_all)
-        accuracy = correct / total
-        print(f"Train accuracy: {accuracy:.4f}")
-        # Convert integer labels to class names for better readability
-        y_pred = y_pred.cpu().numpy().ravel()
-        y_true = y_true.cpu().numpy().ravel()
-        print(f"Accuracy on validation set: {accuracy_score(y_true, y_pred):.4f}")
-    return model, history
-        
+        plot_training_history(history, title=title)
     
+    return model

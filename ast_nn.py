@@ -105,7 +105,7 @@ class ASTBackbone(nn.Module):
         t_dim = test_out.shape[3]
         return f_dim, t_dim
 
-    @autocast()
+    @torch.amp.autocast('cuda')
     def forward(self, x):
         """
         :param x: the input spectrogram, expected shape: (batch_size, time_frame_num, frequency_bins), e.g., (12, 1024, 128)
@@ -129,3 +129,6 @@ class ASTBackbone(nn.Module):
 
         x = self.mlp_head(x)
         return x.float()
+    
+    def get_backbone_name(self):
+        return "AST"

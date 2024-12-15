@@ -167,9 +167,9 @@ class MultitaskRegressor(nn.Module):
         
         # Weights for each task to balance the loss
         self.task_weights = {
-            'valence': 1,
-            'arousal': 1,
-            'danceability': 1              
+            'valence': 1.5,
+            'arousal': 0.8,
+            'danceability': 0.9              
         }
     
     def forward(self, x: torch.Tensor,

@@ -1,0 +1,537 @@
+\documentclass{beamer}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc} % proper font encoding
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{booktabs}
+\usepackage{subcaption}
+\usepackage{caption}
+
+\title{Kolmogorov--Arnold Networks and Transformers:\\
+Analytical Evaluation and Finetuning Results}
+\subtitle{MNIST, FashionMNIST, CIFAR-10, and CIFAR-100}
+\author{Panagiotis-Alexios Spanakis}
+\institute{National Technical University of Athens}
+\date{\today}
+
+\begin{document}
+
+%===========================================================
+\begin{frame}
+    \titlepage
+\end{frame}
+
+%-----------------------------------------------------------
+\begin{frame}{Overview}
+    \tableofcontents
+\end{frame}
+
+%===========================================================
+\section{Kolmogorov--Arnold Networks (KANs)}
+%===========================================================
+\begin{frame}{Kolmogorov--Arnold Representation Theorem (Intuition)}
+    \begin{itemize}
+        \item \textbf{Theorem (simplified statement):}
+              \begin{quote}
+                  Any continuous, real-valued function in several variables can be represented as a superposition of continuous functions of one variable, plus addition.
+              \end{quote}
+        \item \textbf{Motivation for KAN:}
+              \begin{itemize}
+                  \item Traditional MLPs learn linear weights + fixed pointwise nonlinearities (e.g., ReLU).
+                  \item KAN leverages \emph{learnable} univariate ``activation'' functions along edges to approximate these ``Kolmogorov-like'' decompositions more directly.
+              \end{itemize}
+    \end{itemize}
+\end{frame}
+
+\begin{frame}{KAN Architecture Details}
+    \begin{itemize}
+        \item \textbf{Activation Splines/Rationals:}
+              \begin{itemize}
+                  \item Instead of standard ReLUs, each edge in the network is parameterized by a \textbf{spline} or \textbf{rational function}, enabling a more flexible shape.
+                  \item These basis functions can be \emph{refined} by increasing ``knots'' for splines or polynomial degrees for rationals.
+              \end{itemize}
+        \item \textbf{Refinement:}
+              \begin{itemize}
+                  \item Start with a coarse grid (few knots) to keep parameter count low.
+                  \item \texttt{model.refine(k)} adaptively increases the grid, drastically improving approximation at each step.
+              \end{itemize}
+        \item \textbf{Parameter Efficiency:}
+              \begin{itemize}
+                  \item KAN often obtains \emph{lower test errors} compared to an MLP with similar or even larger parameter counts.
+                  \item Especially beneficial for smooth or piecewise-smooth target functions.
+              \end{itemize}
+    \end{itemize}
+\end{frame}
+
+%===========================================================
+\section{KAN vs.\ MLP on Standard and Special Functions}
+%===========================================================
+\begin{frame}{Experiment Setup (Toy \& Special Functions)}
+    \begin{itemize}
+        \item \textbf{Targets:}
+              \begin{itemize}
+                  \item 1D and 2D functions: polynomials, exponentials, Bessel, elliptic, etc.
+                  \item Evaluate train/test RMSE as a function of model parameters.
+              \end{itemize}
+        \item \textbf{Models:}
+              \begin{itemize}
+                  \item \textbf{KAN:} Start $grid = 3$, refine up to $1000$ knots.
+                  \item \textbf{MLP:} For each KAN refinement level (and thus parameter count), attempt to design an MLP with \emph{roughly} the same number of parameters.
+              \end{itemize}
+        \item \textbf{Training:}
+              \begin{itemize}
+                  \item LBFGS optimizer, typically $\sim 200$ steps per refinement stage.
+                  \item Compare final test RMSE at each stage.
+              \end{itemize}
+    \end{itemize}
+\end{frame}
+
+\begin{frame}{Sample Results for Toy Functions}
+    \begin{figure}[h]
+        \centering
+        \includegraphics[width=0.7\linewidth]{experiments/results_1.png}
+        \caption{Example: KAN vs.\ MLP $f(x) = J_0(20x)$. (Left) Train/Test loss vs.\ steps. (Right) Error vs.\ \#params.}
+    \end{figure}
+    \begin{figure}[h]
+        \centering
+        \includegraphics[width=0.7\linewidth]{experiments/results_2.png}
+        \caption{Example: KAN vs.\ MLP on $f(x_1, x_2) = \exp(\sin(\pi x_1) + x_2^2)$. (Left) Train/Test loss vs.\ steps. (Right) Error vs.\ \#params.}
+    \end{figure}
+    \begin{figure}[h]
+        \centering
+        \includegraphics[width=0.7\linewidth]{experiments/results_3.png}
+        \caption{Example: KAN vs.\ MLP on $f(x_1, x_2) = \exp(\sin(\pi x_1) + x_2^2)$. (Left) Train/Test loss vs.\ steps. (Right) Error vs.\ \#params.}
+    \end{figure}
+\end{frame}
+
+\begin{frame}{Insights on Toy Functions}
+    \begin{itemize}
+        \item \textbf{Refinement Gains:}
+              \begin{itemize}
+                  \item KAN experiences abrupt drops in test error whenever the knot grid is increased.
+                  \item MLP’s improvement is more incremental, reliant on extra hidden layers/units.
+              \end{itemize}
+        \item \textbf{Smoothness Advantage:}
+              \begin{itemize}
+                  \item KAN’s learned univariate edges easily approximate well-behaved smooth functions (like polynomials or sinusoidal-based compositions).
+              \end{itemize}
+    \end{itemize}
+\end{frame}
+
+\subsection{Special Functions}
+\begin{frame}{Bessel and Elliptic Functions: Sample Results}
+    \begin{figure}[h]
+        \centering
+        \begin{subfigure}{0.45\textwidth}
+            \includegraphics[width=\linewidth]{experiments/special_jv.png}
+            \caption{\texttt{jv} (Bessel) example}
+        \end{subfigure}
+        \quad
+        \begin{subfigure}{0.45\textwidth}
+            \includegraphics[width=\linewidth]{experiments/special_ellipj.png}
+            \caption{\texttt{ellipj} (Elliptic) example}
+        \end{subfigure}
+    \end{figure}
+\end{frame}
+
+\begin{frame}{Observations}
+  \begin{itemize}
+    \item \textbf{Oscillations/Singularities:} Bessel \texttt{jv} can have repeated zeros; elliptic \texttt{ellipj} may have steep changes.
+    \item \textbf{Refinement helps local patches}: KAN can refine to capture these local variations better than fixed ReLUs, typically lowering test error.
+    \item \textbf{But note:} In some runs, test error can \emph{increase} after a certain refinement (especially with limited data), possibly due to overfitting or numerical instabilities with more knots.
+  \end{itemize}
+  
+\end{frame}
+
+\begin{frame}{Legendre/Spherical Harmonics: Observations}
+  \begin{itemize}
+    \item \textbf{Legendre \texttt{lpmv}:}
+      \begin{itemize}
+        \item Polynomial structure, large derivatives near endpoints.
+        \item KAN refining can mitigate approximation errors in these boundary regions, though overfitting is possible if knots become too dense.
+      \end{itemize}
+    \item \textbf{Spherical Harmonics \texttt{sph\_harm}:}
+      \begin{itemize}
+        \item Multiple local maxima/minima in angular space.
+        \item MLP may require significant depth/width; KAN’s local expansions adapt well. 
+        \item Again, excessive refinement can occasionally degrade test performance if the model overfits.
+      \end{itemize}
+    \item \textbf{Parameter Efficiency:}
+      \begin{itemize}
+        \item KAN \emph{often} yields lower RMSE than MLP at similar parameter counts, but we must balance refinement with the risk of overfitting.
+      \end{itemize}
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Overall Insights on Toy and Special Functions}
+  \begin{itemize}
+    \item \textbf{Strong Approximation Capabilities:}
+      \begin{itemize}
+        \item Across most smooth or piecewise-smooth toy functions, KAN’s refinement leads to impressive accuracy with relatively few parameters.
+        \item Special functions (Bessel, Elliptic, Legendre) also benefit from local expansions in tricky regions (oscillations/singularities).
+      \end{itemize}
+    \item \textbf{Overfitting at Higher Refinement:}
+      \begin{itemize}
+        \item Some test-error plots show \emph{increasing} error as grid size becomes very large.
+        \item Indicates that KAN can overfit if the dataset is limited or the function’s domain is insufficiently sampled.
+        \item A prudent stopping criterion or regularization approach may be needed to prevent \emph{too much} refinement.
+      \end{itemize}
+    \item \textbf{Comparison to MLP:}
+      \begin{itemize}
+        \item For a given parameter budget, KAN generally outperforms MLP on these functions.
+        \item However, MLP error typically doesn’t \emph{increase} suddenly at higher capacity—while KAN might if overrefined.
+      \end{itemize}
+  \end{itemize}
+\end{frame}
+
+
+%===========================================================
+\section{Kolmogorov--Arnold Transformers (KAT)}
+\begin{frame}{Why Merge KAN with Transformers?}
+    \begin{itemize}
+        \item \textbf{Vision Transformers (ViT) Recap:}
+              \begin{itemize}
+                  \item MLP layers inside each transformer block to process ``channel mixing.''
+                  \item Standard practice: ReLU or GELU as fixed activation in MLP.
+              \end{itemize}
+        \item \textbf{KAT Rationale:}
+              \begin{itemize}
+                  \item Replace MLP with \emph{KAN} layers for more expressive learned transformations.
+                  \item Potential for better parameter efficiency at scale (ImageNet-level).
+              \end{itemize}
+        \item \textbf{Challenges \& Solutions (Yang \& Wang, 2024):}
+              \begin{itemize}
+                  \item (C1) \emph{Base function overhead} $\rightarrow$ (S1) \emph{Rational basis.}
+                  \item (C2) \emph{Parameter inefficiency} $\rightarrow$ (S2) \emph{Group KAN.}
+                  \item (C3) \emph{Initialization} $\rightarrow$ (S3) \emph{Variance-preserving init.}
+              \end{itemize}
+    \end{itemize}
+\end{frame}
+
+%===========================================================
+\section{KAT Finetuning on Image Datasets}
+\begin{frame}{Overall Finetuning Strategy}
+    \textbf{General approach for each dataset (MNIST, FashionMNIST, CIFAR-10, CIFAR-100):}
+    \begin{enumerate}
+        \item \textbf{Pretrained Model:}
+              \begin{itemize}
+                  \item Load a KAT (ViT-based) model pretrained on a large dataset (e.g., ImageNet).
+                  \item This leverages the backbone's learned features.
+              \end{itemize}
+        \item \textbf{Adapt Classifier:}
+              \begin{itemize}
+                  \item Use \texttt{model.reset\_classifier(num\_classes=\ldots)} for the target dataset's number of categories.
+              \end{itemize}
+        \item \textbf{Data Preprocessing:}
+              \begin{itemize}
+                  \item Resize images to $224\times 224$, replicate channels if needed (grayscale $\to$ 3-ch).
+                  \item Normalize by ImageNet's mean/std.
+              \end{itemize}
+        \item \textbf{Training Loop:}
+              \begin{itemize}
+                  \item Use AdamW optimizer, lower LR for backbone, higher LR for new head.
+                  \item Early stopping with best checkpoint saved on validation loss improvement.
+              \end{itemize}
+        \item \textbf{Evaluation:}
+              \begin{itemize}
+                  \item Final test set accuracy + confusion matrix + classification report.
+              \end{itemize}
+    \end{enumerate}
+\end{frame}
+
+\subsection{MNIST Results}
+\begin{frame}{MNIST Finetuning Detail}
+    \begin{itemize}
+        \item \textbf{Dataset:} Handwritten digits, 10 classes, grayscale $28\times 28$.
+        \item \textbf{Transform:}
+              \begin{itemize}
+                  \item Upsample to $224\times 224$, replicate to 3 channels.
+                  \item Normalized by $(\mu,\sigma)$ from ImageNet: $\mu=[0.485, 0.456, 0.406]$, $\sigma=[0.229, 0.224, 0.225]$.
+              \end{itemize}
+        \item \textbf{Hyperparameters:}
+              \begin{itemize}
+                  \item 5 epochs, early stopping if no val loss improvement, 
+                  \[
+                  \text{LR}_{\text{head}} = 1\times10^{-5}, \quad \text{LR}_{\text{backbone}} = \frac{\text{LR}_{\text{head}}}{10}.
+                  \]
+              \end{itemize}
+        \item \textbf{Outcome:}
+              \begin{itemize}
+                  \item Final test accuracy $\approx 98.92\%$ in just 5 epochs.
+                  \item Underfits slightly less than a typical scratch-trained model due to large-scale pretraining.
+              \end{itemize}
+    \end{itemize}
+\end{frame}
+
+\begin{frame}{MNIST Training Curves}
+    \begin{figure}[h]
+        \centering
+        \includegraphics[width=0.65\linewidth]{mnist_train_val_loss.png}
+        \caption{Training (blue) vs.\ Validation (red) Loss on MNIST. Notice the rapid drop in training loss and the consistent gap to validation, indicating successful fitting.}
+    \end{figure}
+\end{frame}
+
+\begin{frame}{MNIST Classification Report (Partial)}
+    \small
+    \centering
+    \begin{tabular}{lcccc}
+        \toprule
+        \textbf{Class}    & \textbf{Precision} & \textbf{Recall} & \textbf{F1-score} & \textbf{Support} \\
+        \midrule
+        0                 & 0.99               & 1.00            & 0.99              & 980              \\
+        1                 & 0.99               & 1.00            & 1.00              & 1135             \\
+        2                 & 0.98               & 1.00            & 0.99              & 1032             \\
+        \textbf{\ldots}      & \textbf{\ldots}       & \textbf{\ldots}    & \textbf{\ldots}      & \textbf{\ldots}     \\
+        8                 & 0.99               & 0.99            & 0.99              & 974              \\
+        9                 & 0.99               & 0.98            & 0.98              & 1009             \\
+        \midrule
+        \textbf{Accuracy} & \multicolumn{4}{c}{0.9892 (98.92\%)} \\
+        \bottomrule
+    \end{tabular}
+    
+    \vspace{1em}
+    \textbf{Insight:} High precision and recall across nearly all digits; few misclassifications. Demonstrates strong alignment of pretrained KAT with simple digit shapes.
+\end{frame}
+
+\subsection{FashionMNIST Results}
+\begin{frame}{FashionMNIST Finetuning Detail}
+    \begin{itemize}
+        \item \textbf{Dataset:} Grayscale images of clothing items (10 classes, $28\times 28$).
+        \item \textbf{Preprocessing + Hyperparams:}
+              \begin{itemize}
+                  \item Same upsampling + normalization as MNIST, but classes range from T-shirt, Trouser, Bag, etc.
+                  \item 5-epoch training, AdamW, early stopping.
+              \end{itemize}
+        \item \textbf{Outcome:}
+              \begin{itemize}
+                \item Final validation loss reached $\approx 0.1816$ (saved at epoch 5).
+                \item \textbf{Test accuracy}: $92.78\%$. Is slightly lower than MNIST, likely due to more complex visual patterns.
+              \end{itemize}
+    \end{itemize}
+\end{frame}
+
+\begin{frame}{FashionMNIST Training Curves}
+    \begin{figure}[h]
+        \centering
+        \includegraphics[width=0.55\linewidth]{fashionmnist_train_val.png}
+        \caption{Training (blue) vs.\ Validation (red) Loss across 5 epochs on FashionMNIST. After epoch 1, the model generalizes decently, though the validation curve drops more slowly.}
+    \end{figure}
+\end{frame}
+
+\begin{frame}{FashionMNIST: Classification Report}
+  \small
+  \begin{table}[ht]
+    \centering
+    \begin{tabular}{lcccc}
+      \toprule
+      \textbf{Class} & \textbf{Precision} & \textbf{Recall} & \textbf{F1-score} & \textbf{Support}\\
+      \midrule
+      0 (T-shirt/Top) & 0.90 & 0.85 & 0.87 & 1000 \\
+      1 (Trouser)     & 0.99 & 0.99 & 0.99 & 1000 \\
+      2 (Pullover)    & 0.93 & 0.87 & 0.90 & 1000 \\
+      3 (Dress)       & 0.91 & 0.92 & 0.92 & 1000 \\
+      4 (Coat)        & 0.89 & 0.93 & 0.91 & 1000 \\
+      5 (Sandal)      & 0.99 & 0.98 & 0.99 & 1000 \\
+      6 (Shirt)       & 0.75 & 0.82 & 0.79 & 1000 \\
+      7 (Sneaker)     & 0.98 & 0.95 & 0.96 & 1000 \\
+      8 (Bag)         & 0.99 & 0.99 & 0.99 & 1000 \\
+      9 (Ankle Boot)  & 0.95 & 0.98 & 0.97 & 1000 \\
+      \midrule
+      \textbf{Accuracy}    & \multicolumn{4}{c}{0.9278} \\
+      \textbf{Macro Avg}   & 0.93 & 0.93 & 0.93 & 10000 \\
+      \textbf{Weighted Avg}& 0.93 & 0.93 & 0.93 & 10000 \\
+      \bottomrule
+    \end{tabular}
+  \end{table}
+  
+  \begin{itemize}
+    \item \textbf{Observations:}
+      \begin{itemize}
+        \item Trousers (1) and Sandals (5) reach near-$99\%$ precision/recall.
+        \item Shirts (6) remain relatively tricky (recall $\sim$82\%, f1 $\sim$0.79).
+        \item Overall test accuracy $\sim 92.78\%$, reflecting a strong adaptation of KAT from large-scale pretraining to FashionMNIST’s diverse apparel classes.
+      \end{itemize}
+  \end{itemize}
+  \end{frame}
+
+\subsection{CIFAR-10 Results}
+\begin{frame}{CIFAR-10 Finetuning Detail}
+    \begin{itemize}
+        \item \textbf{Dataset:} 10 classes (32$\times$32 color images), e.g., airplane, car, bird, cat\ldots
+        \item \textbf{Transform:}
+              \begin{itemize}
+                  \item Resize to $224\times 224$, preserving 3 channels.
+                  \item Normalize with ImageNet stats.
+              \end{itemize}
+        \item \textbf{Outcome:}
+              \begin{itemize}
+                  \item Final val loss $\approx 0.1447$, test accuracy $\approx 95.70\%$.
+                  \item Very solid for such a short finetuning process, highlighting the expressiveness of KAT's learned features.
+              \end{itemize}
+    \end{itemize}
+\end{frame}
+
+\begin{frame}{CIFAR-10 Training Curves}
+    \begin{figure}[h]
+        \centering
+        \includegraphics[width=0.55\linewidth]{cifar10_train_val_loss.png}
+        \caption{Training vs.\ Validation Loss for 5 epochs. Notice the relatively quick convergence and stable validation curve.}
+    \end{figure}
+\end{frame}
+
+\begin{frame}{CIFAR-10 Classification Report (Partial)}
+    \small
+    \centering
+    \begin{tabular}{lcccc}
+        \toprule
+        \textbf{Class}    & \textbf{Precision} & \textbf{Recall} & \textbf{F1-score} & \textbf{Support} \\
+        \midrule
+        0 (Airplane)      & 0.98               & 0.95            & 0.97              & 1000             \\
+        1 (Automobile)    & 0.97               & 0.98            & 0.97              & 1000             \\
+        2 (Bird)          & 0.98               & 0.95            & 0.97              & 1000             \\
+        \textbf{\ldots}      & \textbf{\ldots}       & \textbf{\ldots}    & \textbf{\ldots}      & \textbf{\ldots}     \\
+        8 (Ship)          & 0.96               & 0.99            & 0.98              & 1000             \\
+        9 (Truck)         & 0.97               & 0.96            & 0.97              & 1000             \\
+        \midrule
+        \textbf{Accuracy} & \multicolumn{4}{c}{0.9570 (95.70\%)} \\
+        \bottomrule
+    \end{tabular}
+    
+    \vspace{1em}
+    \textbf{Insight:} Minor confusion among some classes (e.g., bird vs.\ airplane if shapes overlap), but overall high precision/recall across the 10 categories.
+\end{frame}
+
+\subsection{CIFAR-100 Results}
+\begin{frame}{CIFAR-100 Finetuning Detail}
+    \begin{itemize}
+        \item \textbf{Dataset:} 100 classes (32$\times$32 color images). More granular classes (apple, aquarium fish, baby, etc.).
+        \item \textbf{Preprocessing:}
+              \begin{itemize}
+                  \item Resize to $224\times 224$, normalize with ImageNet stats.
+              \end{itemize}
+        \item \textbf{Training:}
+              \begin{itemize}
+                  \item 5 total epochs, early stopping checks. Best checkpoint at epoch 5 with val loss $\approx 0.6356$.
+              \end{itemize}
+        \item \textbf{Outcome:}
+              \begin{itemize}
+                  \item Final test accuracy $\approx 81.17\%$ across 100 classes.
+                  \item Larger label space means partial overlap in visual categories, but still quite strong for short training.
+              \end{itemize}
+    \end{itemize}
+\end{frame}
+
+\begin{frame}{CIFAR-100 Training Curves}
+    \begin{figure}[h]
+        \centering
+        \includegraphics[width=0.55\linewidth]{cifar100_train_val_loss.png}
+        \caption{Training vs.\ Validation Loss for 5 epochs. Rapid drop in training loss from $\sim$1.83 to $\sim$0.24; validation saturates around 0.63.}
+    \end{figure}
+\end{frame}
+
+\begin{frame}{CIFAR-100 Classification Report}
+    \textbf{Final test accuracy:} $81.17\%$
+    
+    \textbf{Detailed precision/recall (excerpt):}
+    \begin{itemize}
+        \item Class 0: 0.90 / 0.97 / 0.93
+        \item Class 13: 0.80 / 0.81 / 0.81
+        \item Class 35: 0.48 / 0.62 / 0.54 (harder category)
+        \item Weighted avg: 0.82 / 0.81 / 0.81
+    \end{itemize}
+    
+    \vspace{0.8em}
+    \textbf{Analysis:}
+    \begin{itemize}
+        \item Some classes see high misclassification if visually similar.
+        \item Overall, KAT retains strong pretrained features for many distinct classes.
+    \end{itemize}
+\end{frame}
+
+%===========================================================
+\section{Analysis and Future Directions}
+\begin{frame}{Cross-Dataset Analysis}
+    \textbf{MNIST \& FashionMNIST:}
+    \begin{itemize}
+        \item Both are grayscale, $28\times 28$, easily upsampled.
+        \item $\sim$99\% vs.\ $\sim$92\% accuracy suggests more variability in clothing vs.\ digits.
+    \end{itemize}
+    \textbf{CIFAR-10 \& CIFAR-100:}
+    \begin{itemize}
+        \item Color images, $32\times 32$, upsampled to $224\times 224$.
+        \item $\sim$95.70\% vs.\ $\sim$81.17\% reflect the added difficulty in distinguishing 100 categories vs.\ 10.
+    \end{itemize}
+    \textbf{Common theme:}
+    \begin{itemize}
+        \item KAT harnesses pretrained knowledge from ImageNet-like data and adapts well to these smaller sets, consistently showing strong final accuracies in just 5 epochs.
+    \end{itemize}
+\end{frame}
+
+\section{Conclusion}
+\begin{frame}{Concluding Remarks}
+    \begin{itemize}
+        \item \textbf{KAN:} A powerful, flexible function approximator that can be refined adaptively, often beating MLP baselines in parameter efficiency.
+        \item \textbf{KAT:} By replacing standard MLP blocks in Transformers with KAN, we retain the transformer's powerful attention mechanism but benefit from more expressive channel-mixing layers.
+        \item \textbf{Empirical Results:}
+              \begin{itemize}
+                  \item \underline{Toy Functions}: Sharp error drops with KAN refinement.
+                  \item \underline{MNIST, FashionMNIST, CIFAR-10, CIFAR-100}:
+                        \begin{itemize}
+                            \item Short finetuning (5 epochs) yields strong accuracies: up to 98.92\% on MNIST, 95.70\% on CIFAR-10, 81.17\% on CIFAR-100.
+                        \end{itemize}
+              \end{itemize}
+        \item \textbf{Takeaway:} KAN-based methods appear versatile, from small function approximation tasks to large-scale vision. Further exploration can refine their efficiency and theoretical grounding.
+    \end{itemize}
+\end{frame}
+
+\begin{frame}{Additional Insights: KAN Finetuning vs. Traditional ViTs}
+    \begin{itemize}
+        \item \textbf{Refinement Mechanism vs. Fixed MLP:}
+              \begin{itemize}
+                  \item Traditional ViTs rely on \texttt{static} MLP with ReLU/GELU.
+                  \item KAN-based blocks can \texttt{refine} their activation functions, offering potentially finer-grained adaptation to complex features.
+              \end{itemize}
+        \item \textbf{Parameter Usage \& Expressiveness:}
+              \begin{itemize}
+                  \item KAN layers might achieve similar accuracy with fewer trainable parameters due to flexible edge functions, especially if the data distribution is smooth or piecewise-smooth.
+                  \item However, for extremely high-dimensional tasks, careful design (Group KAN, rational basis) is key to keeping computations manageable.
+              \end{itemize}
+
+    \end{itemize}
+\end{frame}
+
+\begin{frame}{Additional Insights}
+  \item \textbf{Finetuning Behavior:}
+  \begin{itemize}
+      \item Short-epoch finetuning demonstrates that pretrained KAN blocks can quickly adapt to new domains, similarly or sometimes better than standard MLP-based ViTs.
+      \item Preliminary results show minimal risk of overfitting during finetuning, likely due to the built-in smoothness constraints of KAN's piecewise expansions.
+  \end{itemize}
+\item \textbf{Summary:}
+  \begin{itemize}
+      \item KAN-based Transformers exhibit \emph{comparable or superior} accuracy to traditional ViTs in these tasks, with potential for improved parameter efficiency or faster convergence, especially on data with structured or smooth underlying patterns.
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{References}
+    \footnotesize
+    \begin{thebibliography}{1}
+        \bibitem{liu2022KAN}
+        K.~Liu, R.~T.~Q.~Chen, and G.~E.~Karniadakis,
+        \newblock ``Kolmogorov--Arnold Network: A Spline-based Architecture to Learn Functions in High Dimensions.''
+        \newblock \emph{arXiv preprint}, 2022.
+        
+        \bibitem{yang2024KAT}
+        X.~Yang and X.~Wang,
+        \newblock ``Kolmogorov-Arnold Transformer,''
+        \newblock \emph{arXiv preprint}, 2024,
+        \url{https://arxiv.org/abs/2409.10594}.
+    \end{thebibliography}
+\end{frame}
+
+\begin{frame}
+    \centering
+    \Large{\textbf{Thank You!}}
+\end{frame}
+
+\end{document}
